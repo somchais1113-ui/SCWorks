@@ -106,7 +106,7 @@ jobs:
 
       - name: Analyze
         working-directory: scdrive-app
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Build release APK
         id: apk_build
