@@ -31,9 +31,21 @@ jobs:
 
       - name: Extract SC Drive
         run: |
+          set -euxo pipefail
+          ARCHIVE=build-assets/SC_Drive_v1.4.0_GPS_Auto_Offline_HeadUnit.zip
+          file "$ARCHIVE"
           rm -rf scdrive-src
           mkdir scdrive-src
-          unzip -q build-assets/SC_Drive_v1.4.0_GPS_Auto_Offline_HeadUnit.zip -d scdrive-src
+          if unzip -tqq "$ARCHIVE" >/dev/null 2>&1; then
+            unzip -q "$ARCHIVE" -d scdrive-src
+          elif tar -tzf "$ARCHIVE" >/dev/null 2>&1; then
+            tar -xzf "$ARCHIVE" -C scdrive-src
+          else
+            echo 'Unsupported source archive format'
+            exit 2
+          fi
+          find scdrive-src -maxdepth 3 -type f | sort | head -80
+          test -f scdrive-src/app/pubspec.yaml
 
       - name: Flutter doctor
         working-directory: scdrive-src/app
