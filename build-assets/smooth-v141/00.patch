@@ -1,0 +1,277 @@
+--- a/scdrive-app/lib/features/head_unit/head_unit_screen.dart
++++ b/scdrive-app/lib/features/head_unit/head_unit_screen.dart
+@@ -1,5 +1,6 @@
+ import 'dart:async';
+ import 'dart:math' as math;
++import 'dart:ui' as ui;
+ 
+ import 'package:flutter/material.dart';
+ 
+@@ -280,127 +281,346 @@
+   }
+ }
+ 
+-class _InstrumentPanel extends StatelessWidget {
++class _InstrumentPanel extends StatefulWidget {
+   const _InstrumentPanel({required this.telemetry, required this.compact});
+ 
+   final DriveTelemetryService telemetry;
+   final bool compact;
+ 
+   @override
++  State<_InstrumentPanel> createState() => _InstrumentPanelState();
++}
++
++class _InstrumentPanelState extends State<_InstrumentPanel>
++    with SingleTickerProviderStateMixin {
++  late final AnimationController _controller;
++
++  double _fromSpeed = 0;
++  double _toSpeed = 0;
++  double _fromRpm = 0;
++  double _toRpm = 0;
++  double _fromCvt = TeanaJ32Powertrain.cvtLowestRatio;
++  double _toCvt = TeanaJ32Powertrain.cvtLowestRatio;
++  bool _lastLocked = false;
++
++  @override
++  void initState() {
++    super.initState();
++    _controller = AnimationController(
++      vsync: this,
++      duration: const Duration(milliseconds: 560),
++    )..value = 1;
++    _seedFromTelemetry();
++  }
++
++  void _seedFromTelemetry() {
++    final locked = widget.telemetry.hasFreshLocationFix;
++    final speed = locked
++        ? widget.telemetry.speedKph.clamp(0, 240).toDouble()
++        : 0.0;
++    final rpm = locked
++        ? widget.telemetry.estimatedRpm.clamp(0, 6000).toDouble()
++        : 0.0;
++    final cvt = locked
++        ? widget.telemetry.estimatedCvtRatio
++            .clamp(
++              TeanaJ32Powertrain.cvtHighestRatio,
++              TeanaJ32Powertrain.cvtLowestRatio,
++            )
++            .toDouble()
++        : TeanaJ32Powertrain.cvtLowestRatio;
++    _fromSpeed = _toSpeed = speed;
++    _fromRpm = _toRpm = rpm;
++    _fromCvt = _toCvt = cvt;
++    _lastLocked = locked;
++  }
++
++  double _curveT() => Curves.easeInOutCubic.transform(_controller.value);
++
++  double _current(double begin, double end) =>
++      ui.lerpDouble(begin, end, _curveT()) ?? end;
++
++  @override
++  void didUpdateWidget(covariant _InstrumentPanel oldWidget) {
++    super.didUpdateWidget(oldWidget);
++    _syncTargets();
++  }
++
++  void _syncTargets() {
++    final locked = widget.telemetry.hasFreshLocationFix;
++    final targetSpeed = locked
++        ? widget.telemetry.speedKph.clamp(0, 240).toDouble()
++        : 0.0;
++    final targetRpm = locked
++        ? widget.telemetry.estimatedRpm.clamp(0, 6000).toDouble()
++        : 0.0;
++    final targetCvt = locked
++        ? widget.telemetry.estimatedCvtRatio
++            .clamp(
++              TeanaJ32Powertrain.cvtHighestRatio,
++              TeanaJ32Powertrain.cvtLowestRatio,
++            )
++            .toDouble()
++        : TeanaJ32Powertrain.cvtLowestRatio;
++
++    final changed = (targetSpeed - _toSpeed).abs() > 0.03 ||
++        (targetRpm - _toRpm).abs() > 2 ||
++        (targetCvt - _toCvt).abs() > 0.002 ||
++        locked != _lastLocked;
++    if (!changed) return;
++
++    final currentSpeed = _current(_fromSpeed, _toSpeed);
++    final currentRpm = _current(_fromRpm, _toRpm);
++    final currentCvt = _current(_fromCvt, _toCvt);
++
++    _fromSpeed = currentSpeed;
++    _fromRpm = currentRpm;
++    _fromCvt = currentCvt;
++    _toSpeed = targetSpeed;
++    _toRpm = targetRpm;
++    _toCvt = targetCvt;
++    _lastLocked = locked;
++
++    final speedDelta = (targetSpeed - currentSpeed).abs();
++    final rpmDelta = (targetRpm - currentRpm).abs();
++    final durationMs = (470 + (speedDelta * 11) + (rpmDelta / 24))
++        .clamp(470, 720)
++        .round();
++    _controller.duration = Duration(milliseconds: durationMs);
++    _controller.forward(from: 0);
++  }
++
++  @override
++  void dispose() {
++    _controller.dispose();
++    super.dispose();
++  }
++
++  @override
+   Widget build(BuildContext context) {
+-    final gpsLocked = telemetry.hasFreshLocationFix;
+-    final speed = gpsLocked ? telemetry.speedKph.clamp(0, 240).toDouble() : 0.0;
+-    final rpm = gpsLocked ? telemetry.estimatedRpm.clamp(0, 6000).toDouble() : 0.0;
++    final gpsLocked = widget.telemetry.hasFreshLocationFix;
+     return Container(
+       decoration: BoxDecoration(
+         color: const Color(0xFF0E131A),
+         borderRadius: BorderRadius.circular(28),
+         border: Border.all(color: const Color(0xFF202833)),
+       ),
+-      child: Stack(
+-        children: <Widget>[
+-          Positioned.fill(
+-            child: CustomPaint(
+-              painter: _GaugeBackgroundPainter(
+-                speedFraction: speed / 240,
+-                rpmFraction: rpm / 6000,
++      child: AnimatedBuilder(
++        animation: _controller,
++        builder: (context, _) {
++          final speed = _current(_fromSpeed, _toSpeed).clamp(0, 240).toDouble();
++          final rpm = _current(_fromRpm, _toRpm).clamp(0, 6000).toDouble();
++          final cvt = _current(_fromCvt, _toCvt);
++          return Stack(
++            children: <Widget>[
++              Positioned.fill(
++                child: CustomPaint(
++                  painter: _GaugeBackgroundPainter(
++                    speedFraction: speed / 240,
++                    rpmFraction: rpm / 6000,
++                  ),
++                ),
+               ),
+-            ),
+-          ),
+-          Padding(
+-            padding: EdgeInsets.all(compact ? 20 : 30),
+-            child: Column(
+-              crossAxisAlignment: CrossAxisAlignment.start,
+-              children: <Widget>[
+-                Row(
++              Padding(
++                padding: EdgeInsets.all(widget.compact ? 20 : 30),
++                child: Column(
++                  crossAxisAlignment: CrossAxisAlignment.start,
+                   children: <Widget>[
+-                    _StatusPill(
+-                      icon: telemetry.gpsState == GpsState.off
+-                          ? Icons.gps_off_rounded
+-                          : Icons.gps_fixed_rounded,
+-                      label: telemetry.gpsStatusLabel,
+-                      active: telemetry.gpsReady,
+-                      onTap: telemetry.gpsReady
+-                          ? null
+-                          : () => unawaited(telemetry.resolveGpsIssue()),
+-                    ),
+-                    const SizedBox(width: 8),
+-                    const _StatusPill(
+-                      icon: Icons.speed_rounded,
+-                      label: 'GPS SPEED',
+-                      active: true,
+-                    ),
+-                  ],
+-                ),
+-                const Spacer(),
+-                Center(
+-                  child: Column(
+-                    children: <Widget>[
+-                      Text(
+-                        gpsLocked ? speed.round().toString() : '--',
+-                        style: TextStyle(
+-                          color: Colors.white,
+-                          fontSize: compact ? 112 : 150,
+-                          height: 0.82,
+-                          fontWeight: FontWeight.w200,
+-                          letterSpacing: -7,
++                    Row(
++                      children: <Widget>[
++                        _StatusPill(
++                          icon: widget.telemetry.gpsState == GpsState.off
++                              ? Icons.gps_off_rounded
++                              : Icons.gps_fixed_rounded,
++                          label: widget.telemetry.gpsStatusLabel,
++                          active: widget.telemetry.gpsReady,
++                          onTap: widget.telemetry.gpsReady
++                              ? null
++                              : () => unawaited(
++                                    widget.telemetry.resolveGpsIssue(),
++                                  ),
+                         ),
+-                      ),
+-                      SizedBox(height: compact ? 8 : 14),
+-                      const Text(
+-                        'KM/H',
+-                        style: TextStyle(
+-                          color: Color(0xFF8F9AAA),
+-                          fontSize: 16,
+-                          fontWeight: FontWeight.w900,
+-                          letterSpacing: 4,
++                        const SizedBox(width: 8),
++                        const _StatusPill(
++                          icon: Icons.speed_rounded,
++                          label: 'GPS SPEED • SMOOTH',
++                          active: true,
+                         ),
+-                      ),
+-                    ],
+-                  ),
+-                ),
+-                const Spacer(),
+-                Row(
+-                  children: <Widget>[
+-                    Expanded(
+-                      child: _InstrumentMetric(
+-                        label: 'EST. ENGINE RPM',
+-                        value: gpsLocked ? rpm.round().toString() : '--',
+-                        suffix: 'rpm',
+-                        warning: true,
++                      ],
++                    ),
++                    const Spacer(),
++                    Center(
++                      child: Column(
++                        children: <Widget>[
++                          gpsLocked
++                              ? _SmoothRollingNumber(
++                                  value: speed,
++                                  step: 1,
++                                  width: widget.compact ? 250 : 330,
++                                  fontSize: widget.compact ? 112 : 150,
++                                  fontWeight: FontWeight.w300,
++                                  letterSpacing: -6.5,
++                                )
++                              : Text(
++                                  '--',
++                                  style: TextStyle(
++                                    color: Colors.white,
++                                    fontSize: widget.compact ? 112 : 150,
++                                    height: 0.82,
++                                    fontWeight: FontWeight.w300,
++                                    letterSpacing: -6.5,
++                                    fontFeatures: const <ui.FontFeature>[
++                                      ui.FontFeature.tabularFigures(),
++                                    ],
++                                  ),
++                                ),
