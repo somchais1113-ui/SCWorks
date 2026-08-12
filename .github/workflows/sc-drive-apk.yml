@@ -86,33 +86,46 @@ jobs:
           </automotiveApp>
           XML
 
-          grep -n 'geolocator\|flutter_carplay' scdrive-app/pubspec.yaml
-          grep -n 'namespace\|applicationId\|appAuthRedirectScheme' scdrive-app/android/app/build.gradle.kts
-          grep -n 'ACCESS_FINE_LOCATION\|category.HOME\|AndroidAutoService' scdrive-app/android/app/src/main/AndroidManifest.xml
-
       - name: Get dependencies
         working-directory: scdrive-app
         run: flutter pub get
 
       - name: Analyze
         working-directory: scdrive-app
-        continue-on-error: true
         run: flutter analyze
 
       - name: Build release APK
+        id: apk_build
         working-directory: scdrive-app
         env:
           SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
         shell: bash
         run: |
-          set -euxo pipefail
-          flutter build apk --release --dart-define=SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID:-}"
-          test -s build/app/outputs/flutter-apk/app-release.apk
+          set +e
+          set -o pipefail
+          flutter build apk --release --dart-define=SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID:-}" 2>&1 | tee ../build.log
+          STATUS=${PIPESTATUS[0]}
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-build-log
+          path: build.log
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Stop on build failure
+        if: steps.apk_build.outputs.status != '0'
+        run: exit 1
 
       - name: Verify APK
         shell: bash
         run: |
           set -euxo pipefail
+          test -s scdrive-app/build/app/outputs/flutter-apk/app-release.apk
           mkdir -p out
           cp scdrive-app/build/app/outputs/flutter-apk/app-release.apk out/SC_Drive-v1.4.0-gps-auto-headunit.apk
           sha256sum out/SC_Drive-v1.4.0-gps-auto-headunit.apk | tee out/SC_Drive-v1.4.0-gps-auto-headunit.apk.sha256
