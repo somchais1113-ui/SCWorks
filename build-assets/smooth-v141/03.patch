@@ -1,0 +1,181 @@
+nter.dy + math.sin(angle) * innerRadius,
++      );
++      canvas.drawLine(inner, outer, tickPaint);
++    }
++
+     final speedPaint = Paint()
+       ..style = PaintingStyle.stroke
+       ..strokeCap = StrokeCap.round
+       ..strokeWidth = 6
+       ..color = const Color(0xFFEBF0F5);
+-    canvas.drawArc(rect, start, sweep * speedFraction, false, speedPaint);
++    canvas.drawArc(
++      rect,
++      start,
++      sweep * safeSpeedFraction,
++      false,
++      speedPaint,
++    );
++
++    if (safeSpeedFraction > 0.003) {
++      final angle = start + (sweep * safeSpeedFraction);
++      final lead = Offset(
++        center.dx + math.cos(angle) * radius,
++        center.dy + math.sin(angle) * radius,
++      );
++      canvas.drawCircle(
++        lead,
++        9,
++        Paint()..color = const Color(0x26FFFFFF),
++      );
++      canvas.drawCircle(
++        lead,
++        4.2,
++        Paint()..color = const Color(0xFFF6F8FA),
++      );
++    }
+ 
+     final rpmRect = Rect.fromCircle(center: center, radius: radius + 14);
+-    final rpmPaint = Paint()
++    final rpmBase = Paint()
+       ..style = PaintingStyle.stroke
+       ..strokeCap = StrokeCap.round
+       ..strokeWidth = 2
++      ..color = const Color(0xFF332A22);
++    canvas.drawArc(rpmRect, start, sweep, false, rpmBase);
++
++    final rpmPaint = Paint()
++      ..style = PaintingStyle.stroke
++      ..strokeCap = StrokeCap.round
++      ..strokeWidth = 2.4
+       ..color = const Color(0xFFE09A4F);
+-    canvas.drawArc(rpmRect, start, sweep * rpmFraction, false, rpmPaint);
++    canvas.drawArc(
++      rpmRect,
++      start,
++      sweep * safeRpmFraction,
++      false,
++      rpmPaint,
++    );
++
++    if (safeRpmFraction > 0.003) {
++      final angle = start + (sweep * safeRpmFraction);
++      final leadRadius = radius + 14;
++      final lead = Offset(
++        center.dx + math.cos(angle) * leadRadius,
++        center.dy + math.sin(angle) * leadRadius,
++      );
++      canvas.drawCircle(
++        lead,
++        3.2,
++        Paint()..color = const Color(0xFFF0AB62),
++      );
++    }
+   }
+ 
+   @override
+--- a/scdrive-app/lib/services/drive_telemetry_service.dart
++++ b/scdrive-app/lib/services/drive_telemetry_service.dart
+@@ -227,22 +227,39 @@
+     final now = position.timestamp;
+     final rawSpeedMps = math.max(0.0, position.speed).toDouble();
+     final previousSpeed = _smoothedSpeedMps;
++    final previousSampleAt = _lastSampleAt;
++    final hadPreviousSample = previousSampleAt != null;
+ 
+-    // Light low-pass filter to avoid a nervous speed display on inexpensive
+-    // head-unit GPS receivers.
+-    _smoothedSpeedMps = previousSpeed == 0
+-        ? rawSpeedMps
+-        : (previousSpeed * 0.62) + (rawSpeedMps * 0.38);
+-
+-    if (_lastSampleAt != null) {
+-      final dt = now.difference(_lastSampleAt!).inMilliseconds / 1000;
+-      if (dt > 0.15 && dt < 8) {
+-        final rawAcceleration = (_smoothedSpeedMps - previousSpeed) / dt;
+-        _accelerationMps2 = (_accelerationMps2 * 0.68) +
+-            (rawAcceleration.clamp(-4.5, 4.5) * 0.32);
++    final sampleDt = hadPreviousSample
++        ? (now.difference(previousSampleAt).inMilliseconds / 1000)
++            .clamp(0.15, 2.5)
++            .toDouble()
++        : 0.8;
++
++    // GPS head units usually deliver speed in bursts (often around 1 Hz).
++    // Treat the GNSS value as a target instead of exposing each packet
++    // directly. A time-aware low-pass filter reduces 23 -> 24 style stepping
++    // while remaining responsive enough for an in-car speed display.
++    final speedTarget = rawSpeedMps < 0.45 ? 0.0 : rawSpeedMps;
++    if (!hadPreviousSample) {
++      _smoothedSpeedMps = speedTarget;
++    } else {
++      final speedAlpha = 1 - math.exp(-sampleDt / 0.85);
++      _smoothedSpeedMps = previousSpeed +
++          ((speedTarget - previousSpeed) * speedAlpha.clamp(0.18, 0.72));
++      if (speedTarget == 0 && _smoothedSpeedMps < 0.35) {
++        _smoothedSpeedMps = 0;
+       }
+     }
+ 
++    if (hadPreviousSample && sampleDt > 0.15 && sampleDt < 8) {
++      final rawAcceleration = (_smoothedSpeedMps - previousSpeed) / sampleDt;
++      final accelAlpha = 1 - math.exp(-sampleDt / 1.15);
++      _accelerationMps2 +=
++          (rawAcceleration.clamp(-3.8, 3.8) - _accelerationMps2) *
++              accelAlpha.clamp(0.12, 0.46);
++    }
++
+     _lastSampleAt = now;
+     _speedKph = _smoothedSpeedMps * 3.6;
+     _heading = position.heading.isFinite ? position.heading : 0;
+@@ -251,14 +268,44 @@
+     _longitude = position.longitude;
+     _hasLocationFix = true;
+     _gpsState = GpsState.locked;
+-    _estimatedCvtRatio = TeanaJ32Powertrain.estimatedCvtRatio(
++
++    final targetCvtRatio = TeanaJ32Powertrain.estimatedCvtRatio(
+       speedKph: _speedKph,
+       accelerationMps2: _accelerationMps2,
+     );
+-    _estimatedRpm = TeanaJ32Powertrain.estimatedEngineRpm(
++    final targetRpm = TeanaJ32Powertrain.estimatedEngineRpm(
+       speedKph: _speedKph,
+       accelerationMps2: _accelerationMps2,
+     );
++
++    if (!hadPreviousSample) {
++      _estimatedCvtRatio = targetCvtRatio;
++      _estimatedRpm = targetRpm;
++    } else {
++      // A CVT does not instantaneously jump between calculated ratios. Limit
++      // the rate of change and then ease toward the requested ratio/RPM. This
++      // gives the estimated powertrain display believable mechanical inertia.
++      final ratioDelta = targetCvtRatio - _estimatedCvtRatio;
++      final maxRatioStep = 0.42 * sampleDt;
++      final limitedRatioDelta =
++          ratioDelta.clamp(-maxRatioStep, maxRatioStep).toDouble();
++      final ratioAlpha = 1 - math.exp(-sampleDt / 0.75);
++      _estimatedCvtRatio += limitedRatioDelta * ratioAlpha.clamp(0.18, 0.72);
++
++      final rpmDelta = targetRpm - _estimatedRpm;
++      final risePerSecond = _accelerationMps2 > 0.35 ? 1250.0 : 760.0;
++      const fallPerSecond = 820.0;
++      final limitedRpmDelta = rpmDelta.clamp(
++        -fallPerSecond * sampleDt,
++        risePerSecond * sampleDt,
++      ).toDouble();
++      final rpmAlpha = 1 - math.exp(-sampleDt / 0.68);
++      _estimatedRpm += limitedRpmDelta * rpmAlpha.clamp(0.20, 0.76);
++      _estimatedRpm = _estimatedRpm
++          .clamp(TeanaJ32Powertrain.idleRpm, TeanaJ32Powertrain.displayMaxRpm)
++          .toDouble();
++    }
++
+     _errorMessage = null;
+     notifyListeners();
+   }
+--- a/scdrive-app/lib/domain/teana_j32_powertrain.dart
++++ b/scdrive-app/lib/domain/teana_j32_powertrain.dart
+@@ -51,8 +51,9 @@
+     // Cruise RPM target approximates a relaxed CV
