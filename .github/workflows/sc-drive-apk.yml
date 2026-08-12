@@ -41,7 +41,7 @@ jobs:
       - name: Flutter doctor
         run: flutter doctor -v
 
-      - name: Generate Android scaffold
+      - name: Generate Android scaffold and apply compatibility fixes
         shell: bash
         run: |
           set -euxo pipefail
@@ -55,6 +55,7 @@ jobs:
 
           python3 - <<'PY'
           from pathlib import Path
+
           p = Path('scdrive-app/pubspec.yaml')
           s = p.read_text()
           old = '  flutter_carplay:\n    path: ../packages/flutter_carplay\n'
@@ -63,6 +64,19 @@ jobs:
           s = s.replace(old, '  flutter_carplay: ^1.6.4\n')
           s = s.replace('geolocator: ^14.0.3', 'geolocator: 14.0.2')
           p.write_text(s)
+
+          head = Path('scdrive-app/lib/features/head_unit/head_unit_screen.dart')
+          s = head.read_text()
+          if 'Icons.rainy' not in s:
+              raise SystemExit('weather icon compatibility pattern not found')
+          head.write_text(s.replace('Icons.rainy', 'Icons.water_drop_rounded'))
+
+          gps = Path('scdrive-app/lib/services/drive_telemetry_service.dart')
+          s = gps.read_text()
+          old = 'final rawSpeedMps = math.max(0, position.speed);'
+          if old not in s:
+              raise SystemExit('GPS speed compatibility pattern not found')
+          gps.write_text(s.replace(old, 'final rawSpeedMps = math.max(0.0, position.speed).toDouble();'))
 
           g = Path('scdrive-app/android/app/build.gradle.kts')
           s = g.read_text()
@@ -92,7 +106,6 @@ jobs:
 
       - name: Analyze
         working-directory: scdrive-app
-        continue-on-error: true
         run: flutter analyze
 
       - name: Build release APK
