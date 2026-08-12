@@ -1,0 +1,11 @@
+T calibration. Positive GPS
+     // acceleration raises the target to imitate CVT kick-down/ratio hold.
+     final cruiseTarget = 1120 + (speedKph * 4.8);
+-    final accelBoost = math.max(0, accelerationMps2) * 1350;
+-    final decelReduction = math.min(0, accelerationMps2) * 120;
++    final positiveLoad = math.max(0, accelerationMps2).clamp(0, 2.2);
++    final accelBoost = math.pow(positiveLoad, 0.78) * 880;
++    final decelReduction = math.min(0, accelerationMps2) * 80;
+     final targetRpm = (cruiseTarget + accelBoost + decelReduction)
+         .clamp(idleRpm, displayMaxRpm)
+         .toDouble();
