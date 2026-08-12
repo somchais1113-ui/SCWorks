@@ -63,20 +63,22 @@ jobs:
               raise SystemExit('flutter_carplay path dependency pattern not found')
           s = s.replace(old, '  flutter_carplay: ^1.6.4\n')
           s = s.replace('geolocator: ^14.0.3', 'geolocator: 14.0.2')
+          s = s.replace('version: 1.4.0+5', 'version: 1.4.1+6')
           p.write_text(s)
 
           head = Path('scdrive-app/lib/features/head_unit/head_unit_screen.dart')
           s = head.read_text()
-          if 'Icons.rainy' not in s:
-              raise SystemExit('weather icon compatibility pattern not found')
-          head.write_text(s.replace('Icons.rainy', 'Icons.water_drop_rounded'))
+          if 'Icons.rainy' in s:
+              s = s.replace('Icons.rainy', 'Icons.water_drop_rounded')
+          head.write_text(s)
 
           gps = Path('scdrive-app/lib/services/drive_telemetry_service.dart')
           s = gps.read_text()
-          old = 'final rawSpeedMps = math.max(0, position.speed);'
-          if old not in s:
-              raise SystemExit('GPS speed compatibility pattern not found')
-          gps.write_text(s.replace(old, 'final rawSpeedMps = math.max(0.0, position.speed).toDouble();'))
+          s = s.replace(
+              'final rawSpeedMps = math.max(0, position.speed);',
+              'final rawSpeedMps = math.max(0.0, position.speed).toDouble();',
+          )
+          gps.write_text(s)
 
           g = Path('scdrive-app/android/app/build.gradle.kts')
           s = g.read_text()
@@ -99,6 +101,16 @@ jobs:
               <uses name="template"/>
           </automotiveApp>
           XML
+
+      - name: Apply smooth instrument cluster patch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat build-assets/smooth-v141/{00,01,02,03,04}.patch > /tmp/scdrive-smooth-v141.patch
+          echo 'ffc9f0266ab405b00a6ae3280a79622c7f5b1f3ca52d4529923f7bb11dc1c3b9  /tmp/scdrive-smooth-v141.patch' | sha256sum -c -
+          patch -p1 --forward --batch < /tmp/scdrive-smooth-v141.patch
+          grep -n 'class _SmoothRollingNumber' scdrive-app/lib/features/head_unit/head_unit_screen.dart
+          grep -n 'GPS head units usually deliver speed' scdrive-app/lib/services/drive_telemetry_service.dart
 
       - name: Get dependencies
         working-directory: scdrive-app
@@ -126,7 +138,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SC-Drive-build-log
+          name: SC-Drive-v1.4.1-build-log
           path: build.log
           if-no-files-found: error
           retention-days: 14
@@ -141,14 +153,14 @@ jobs:
           set -euxo pipefail
           test -s scdrive-app/build/app/outputs/flutter-apk/app-release.apk
           mkdir -p out
-          cp scdrive-app/build/app/outputs/flutter-apk/app-release.apk out/SC_Drive-v1.4.0-gps-auto-headunit.apk
-          sha256sum out/SC_Drive-v1.4.0-gps-auto-headunit.apk | tee out/SC_Drive-v1.4.0-gps-auto-headunit.apk.sha256
+          cp scdrive-app/build/app/outputs/flutter-apk/app-release.apk out/SC_Drive-v1.4.1-smooth-cluster-headunit.apk
+          sha256sum out/SC_Drive-v1.4.1-smooth-cluster-headunit.apk | tee out/SC_Drive-v1.4.1-smooth-cluster-headunit.apk.sha256
           ls -lh out/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SC-Drive-v1.4.0-APK
+          name: SC-Drive-v1.4.1-Smooth-Cluster-APK
           path: out/*
           if-no-files-found: error
           retention-days: 14
