@@ -63,7 +63,6 @@ jobs:
               raise SystemExit('flutter_carplay path dependency pattern not found')
           s = s.replace(old, '  flutter_carplay: ^1.6.4\n')
           s = s.replace('geolocator: ^14.0.3', 'geolocator: 14.0.2')
-          s = s.replace('version: 1.4.0+5', 'version: 1.4.1+6')
           p.write_text(s)
 
           head = Path('scdrive-app/lib/features/head_unit/head_unit_screen.dart')
@@ -102,15 +101,15 @@ jobs:
           </automotiveApp>
           XML
 
-      - name: Apply smooth instrument cluster patch
+      - name: Apply exact smooth instrument cluster patch
         shell: bash
         run: |
           set -euxo pipefail
-          cat build-assets/smooth-v141/{00,01,02,03,04}.patch > /tmp/scdrive-smooth-v141.patch
-          echo 'ffc9f0266ab405b00a6ae3280a79622c7f5b1f3ca52d4529923f7bb11dc1c3b9  /tmp/scdrive-smooth-v141.patch' | sha256sum -c -
-          patch -p1 --forward --batch < /tmp/scdrive-smooth-v141.patch
-          grep -n 'class _SmoothRollingNumber' scdrive-app/lib/features/head_unit/head_unit_screen.dart
-          grep -n 'GPS head units usually deliver speed' scdrive-app/lib/services/drive_telemetry_service.dart
+          echo '862953f3847da94535df2b756b82f41827538677146c124fe7d338e54b946b2d  build-assets/scdrive-v141-simple.patch' | sha256sum -c -
+          patch -p1 --forward --batch < build-assets/scdrive-v141-simple.patch
+          grep -n 'TweenAnimationBuilder<double>' scdrive-app/lib/features/head_unit/head_unit_screen.dart
+          grep -n 'target stable here' scdrive-app/lib/services/drive_telemetry_service.dart
+          grep -n '^version: 1.4.1+6' scdrive-app/pubspec.yaml
 
       - name: Get dependencies
         working-directory: scdrive-app
