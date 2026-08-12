@@ -1,0 +1,146 @@
+                ),
+-                  ],
+-                ),
+-                const Spacer(),
+-                Center(
+-                  child: Column(
+-                    children: <Widget>[
+-                      Text(
+-                        gpsLocked ? speed.round().toString() : '--',
+-                        style: TextStyle(
+-                          color: Colors.white,
+-                          fontSize: compact ? 112 : 150,
+-                          height: 0.82,
+-                          fontWeight: FontWeight.w200,
+-                          letterSpacing: -7,
++                    Row(
++                      children: <Widget>[
++                        _StatusPill(
++                          icon: widget.telemetry.gpsState == GpsState.off
++                              ? Icons.gps_off_rounded
++                              : Icons.gps_fixed_rounded,
++                          label: widget.telemetry.gpsStatusLabel,
++                          active: widget.telemetry.gpsReady,
++                          onTap: widget.telemetry.gpsReady
++                              ? null
++                              : () => unawaited(
++                                    widget.telemetry.resolveGpsIssue(),
++                                  ),
+                         ),
+-                      ),
+-                      SizedBox(height: compact ? 8 : 14),
+-                      const Text(
+-                        'KM/H',
+-                        style: TextStyle(
+-                          color: Color(0xFF8F9AAA),
+-                          fontSize: 16,
+-                          fontWeight: FontWeight.w900,
+-                          letterSpacing: 4,
++                        const SizedBox(width: 8),
++                        const _StatusPill(
++                          icon: Icons.speed_rounded,
++                          label: 'GPS SPEED • SMOOTH',
++                          active: true,
+                         ),
+-                      ),
+-                    ],
+-                  ),
+-                ),
+-                const Spacer(),
+-                Row(
+-                  children: <Widget>[
+-                    Expanded(
+-                      child: _InstrumentMetric(
+-                        label: 'EST. ENGINE RPM',
+-                        value: gpsLocked ? rpm.round().toString() : '--',
+-                        suffix: 'rpm',
+-                        warning: true,
++                      ],
++                    ),
++                    const Spacer(),
++                    Center(
++                      child: Column(
++                        children: <Widget>[
++                          gpsLocked
++                              ? _SmoothRollingNumber(
++                                  value: speed,
++                                  step: 1,
++                                  width: widget.compact ? 250 : 330,
++                                  fontSize: widget.compact ? 112 : 150,
++                                  fontWeight: FontWeight.w300,
++                                  letterSpacing: -6.5,
++                                )
++                              : Text(
++                                  '--',
++                                  style: TextStyle(
++                                    color: Colors.white,
++                                    fontSize: widget.compact ? 112 : 150,
++                                    height: 0.82,
++                                    fontWeight: FontWeight.w300,
++                                    letterSpacing: -6.5,
++                                    fontFeatures: const <ui.FontFeature>[
++                                      ui.FontFeature.tabularFigures(),
++                                    ],
++                                  ),
++                                ),
++                          SizedBox(height: widget.compact ? 8 : 14),
++                          const Text(
++                            'KM/H',
++                            style: TextStyle(
++                              color: Color(0xFF8F9AAA),
++                              fontSize: 16,
++                              fontWeight: FontWeight.w900,
++                              letterSpacing: 4,
++                            ),
++                          ),
++                        ],
+                       ),
+                     ),
+-                    Container(
+-                      width: 1,
+-                      height: compact ? 54 : 68,
+-                      color: const Color(0xFF26303B),
++                    const Spacer(),
++                    Row(
++                      children: <Widget>[
++                        Expanded(
++                          child: _InstrumentMetric(
++                            label: 'EST. ENGINE RPM',
++                            valueWidget: gpsLocked
++                                ? _SmoothRollingNumber(
++                                    value: rpm,
++                                    step: 10,
++                                    width: 108,
++                                    fontSize: 28,
++                                    fontWeight: FontWeight.w600,
++                                    letterSpacing: -1.1,
++                                    slotHeight: 30,
++                                    alignment: Alignment.centerLeft,
++                                  )
++                                : null,
++                            value: gpsLocked ? null : '--',
++                            suffix: 'rpm',
++                            warning: true,
++                          ),
++                        ),
++                        Container(
++                          width: 1,
++                          height: widget.compact ? 54 : 68,
++                          color: const Color(0xFF26303B),
++                        ),
++                        Expanded(
++                          child: _InstrumentMetric(
++                            label: 'EST. CVT RATIO',
++                            value: gpsLocked ? cvt.toStringAsFixed(2) : '--',
++                            suffix: ':1',
++                          ),
++                        ),
++                      ],
+                     ),
+-                    Expanded(
+-                      child: _InstrumentMetric(
+-                        label: 'EST. CVT RATIO',
+-                        value: gpsLocked
+-                            ? telemetry.estimatedCvtRatio.toStringAsFixed(2)
+-                            : '--',
+-
