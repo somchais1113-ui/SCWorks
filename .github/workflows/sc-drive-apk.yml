@@ -8,7 +8,7 @@ on:
 jobs:
   android:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,88 +26,60 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Reconstruct verified SC Drive source
+      - name: Recover and verify full SC Drive source
         shell: bash
         run: |
           set -euxo pipefail
-          cat build-assets/scdrive-src/{00,01,02,03,04,05,06,07}.b64 > /tmp/scdrive-src.b64
-          base64 -d /tmp/scdrive-src.b64 > /tmp/scdrive-src.tar.gz
-          echo 'dd2a988ba4e4b142b9bf7da5279b19f34986228988e7a4bc5fb5f7df2c5a87ff  /tmp/scdrive-src.tar.gz' | sha256sum -c -
-          rm -rf /tmp/scdrive-unpack
-          mkdir -p /tmp/scdrive-unpack
-          tar -xzf /tmp/scdrive-src.tar.gz -C /tmp/scdrive-unpack
-          test -f /tmp/scdrive-unpack/scdrive_headunit_bundle/pubspec.yaml
+          SRCFILE=build-assets/SC_Drive_v1.4.0_GPS_Auto_Offline_HeadUnit.zip
+          file "$SRCFILE"
+          rm -f /tmp/scdrive-source.zip
+
+          if unzip -tqq "$SRCFILE" >/dev/null 2>&1; then
+            cp "$SRCFILE" /tmp/scdrive-source.zip
+          elif gzip -t "$SRCFILE" >/dev/null 2>&1; then
+            gzip -dc "$SRCFILE" > /tmp/scdrive-source.zip
+          else
+            echo 'Source is neither ZIP nor gzip-wrapped ZIP'
+            exit 2
+          fi
+
+          file /tmp/scdrive-source.zip
+          echo '6093bb9fd31cf7192e4c01c59d650e4ac2c3569a5298df93fafd4570d38948c0  /tmp/scdrive-source.zip' | sha256sum -c -
+          unzip -tqq /tmp/scdrive-source.zip
+          rm -rf scdrive-src
+          mkdir scdrive-src
+          unzip -q /tmp/scdrive-source.zip -d scdrive-src
+          test -f scdrive-src/app/pubspec.yaml
+          test -f scdrive-src/packages/flutter_carplay/pubspec.yaml
 
       - name: Flutter doctor
         run: flutter doctor -v
 
-      - name: Generate Android scaffold
-        shell: bash
-        run: |
-          set -euxo pipefail
-          rm -rf scdrive-app
-          flutter create --platforms=android --org com.scdeport --project-name sc_drive scdrive-app
-          SRC=/tmp/scdrive-unpack/scdrive_headunit_bundle
-          cp -a "$SRC/lib" scdrive-app/
-          cp "$SRC/pubspec.yaml" scdrive-app/pubspec.yaml
-          cp "$SRC/analysis_options.yaml" scdrive-app/analysis_options.yaml
-
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('scdrive-app/pubspec.yaml')
-          s = p.read_text()
-          old = '  flutter_carplay:\n    path: ../packages/flutter_carplay\n'
-          if old not in s:
-              raise SystemExit('flutter_carplay path dependency pattern not found')
-          s = s.replace(old, '  flutter_carplay: ^1.6.4\n')
-          p.write_text(s)
-
-          g = Path('scdrive-app/android/app/build.gradle.kts')
-          s = g.read_text()
-          s = s.replace('com.scdeport.sc_drive', 'com.scdeport.scdrive')
-          marker = '        versionName = flutter.versionName\n'
-          if marker not in s:
-              raise SystemExit('defaultConfig marker not found')
-          s = s.replace(marker, marker + '        manifestPlaceholders["appAuthRedirectScheme"] = "scdrive-login"\n')
-          g.write_text(s)
-          PY
-
-          SRC=/tmp/scdrive-unpack/scdrive_headunit_bundle
-          cp "$SRC/android_overlay/AndroidManifest.xml" scdrive-app/android/app/src/main/AndroidManifest.xml
-          rm -rf scdrive-app/android/app/src/main/kotlin/com/scdeport/sc_drive
-          mkdir -p scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive
-          cp "$SRC/android_overlay/MainActivity.kt" scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt
-          mkdir -p scdrive-app/android/app/src/main/res/xml
-          cat > scdrive-app/android/app/src/main/res/xml/automotive_app_desc.xml <<'XML'
-          <automotiveApp xmlns:android="http://schemas.android.com/apk/res/android">
-              <uses name="template"/>
-          </automotiveApp>
-          XML
-
-          grep -n 'namespace\|applicationId\|appAuthRedirectScheme' scdrive-app/android/app/build.gradle.kts
-          grep -n 'ACCESS_FINE_LOCATION\|category.HOME\|AndroidAutoService' scdrive-app/android/app/src/main/AndroidManifest.xml
+      - name: Restore Android Gradle wrapper
+        working-directory: scdrive-src/app
+        run: ./scripts/ensure_android_scaffold.sh
 
       - name: Get dependencies
-        working-directory: scdrive-app
+        working-directory: scdrive-src/app
         run: flutter pub get
 
       - name: Analyze
-        working-directory: scdrive-app
+        working-directory: scdrive-src/app
         continue-on-error: true
         run: flutter analyze
 
       - name: Test if present
-        working-directory: scdrive-app
+        working-directory: scdrive-src/app
         shell: bash
         run: |
           if [ -d test ] && find test -type f -name '*_test.dart' -print -quit | grep -q .; then
             flutter test
           else
-            echo 'No Dart tests in this source package.'
+            echo 'No Dart tests in this package.'
           fi
 
       - name: Build release APK
-        working-directory: scdrive-app
+        working-directory: scdrive-src/app
         env:
           SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
         shell: bash
@@ -116,12 +88,12 @@ jobs:
           flutter build apk --release --dart-define=SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID:-}"
           test -s build/app/outputs/flutter-apk/app-release.apk
 
-      - name: Verify APK
+      - name: Package and checksum APK
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p out
-          cp scdrive-app/build/app/outputs/flutter-apk/app-release.apk out/SC_Drive-v1.4.0-gps-auto-headunit.apk
+          cp scdrive-src/app/build/app/outputs/flutter-apk/app-release.apk out/SC_Drive-v1.4.0-gps-auto-headunit.apk
           sha256sum out/SC_Drive-v1.4.0-gps-auto-headunit.apk | tee out/SC_Drive-v1.4.0-gps-auto-headunit.apk.sha256
           ls -lh out/
 
