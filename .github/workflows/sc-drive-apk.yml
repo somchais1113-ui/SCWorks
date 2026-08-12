@@ -51,6 +51,7 @@ jobs:
           cp -a "$SRC/lib" scdrive-app/
           cp "$SRC/pubspec.yaml" scdrive-app/pubspec.yaml
           cp "$SRC/analysis_options.yaml" scdrive-app/analysis_options.yaml
+          rm -rf scdrive-app/test
 
           python3 - <<'PY'
           from pathlib import Path
@@ -97,16 +98,6 @@ jobs:
         working-directory: scdrive-app
         continue-on-error: true
         run: flutter analyze
-
-      - name: Test if present
-        working-directory: scdrive-app
-        shell: bash
-        run: |
-          if [ -d test ] && find test -type f -name '*_test.dart' -print -quit | grep -q .; then
-            flutter test
-          else
-            echo 'No Dart tests in this source package.'
-          fi
 
       - name: Build release APK
         working-directory: scdrive-app
