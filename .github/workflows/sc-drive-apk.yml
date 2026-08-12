@@ -60,6 +60,7 @@ jobs:
           if old not in s:
               raise SystemExit('flutter_carplay path dependency pattern not found')
           s = s.replace(old, '  flutter_carplay: ^1.6.4\n')
+          s = s.replace('geolocator: ^14.0.3', 'geolocator: 14.0.2')
           p.write_text(s)
 
           g = Path('scdrive-app/android/app/build.gradle.kts')
@@ -84,6 +85,7 @@ jobs:
           </automotiveApp>
           XML
 
+          grep -n 'geolocator\|flutter_carplay' scdrive-app/pubspec.yaml
           grep -n 'namespace\|applicationId\|appAuthRedirectScheme' scdrive-app/android/app/build.gradle.kts
           grep -n 'ACCESS_FINE_LOCATION\|category.HOME\|AndroidAutoService' scdrive-app/android/app/src/main/AndroidManifest.xml
 
