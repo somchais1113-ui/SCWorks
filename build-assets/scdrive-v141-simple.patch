@@ -1,0 +1,291 @@
+--- a/scdrive-app/lib/features/head_unit/head_unit_screen.dart
++++ b/scdrive-app/lib/features/head_unit/head_unit_screen.dart
+@@ -1,5 +1,6 @@
+ import 'dart:async';
+ import 'dart:math' as math;
++import 'dart:ui' as ui;
+ 
+ import 'package:flutter/material.dart';
+ 
+@@ -300,11 +301,25 @@
+       child: Stack(
+         children: <Widget>[
+           Positioned.fill(
+-            child: CustomPaint(
+-              painter: _GaugeBackgroundPainter(
+-                speedFraction: speed / 240,
+-                rpmFraction: rpm / 6000,
+-              ),
++            child: TweenAnimationBuilder<double>(
++              tween: Tween<double>(end: speed),
++              duration: const Duration(milliseconds: 620),
++              curve: Curves.easeInOutCubic,
++              builder: (context, animatedSpeed, _) {
++                return TweenAnimationBuilder<double>(
++                  tween: Tween<double>(end: rpm),
++                  duration: const Duration(milliseconds: 680),
++                  curve: Curves.easeInOutCubic,
++                  builder: (context, animatedRpm, __) {
++                    return CustomPaint(
++                      painter: _GaugeBackgroundPainter(
++                        speedFraction: animatedSpeed / 240,
++                        rpmFraction: animatedRpm / 6000,
++                      ),
++                    );
++                  },
++                );
++              },
+             ),
+           ),
+           Padding(
+@@ -336,16 +351,42 @@
+                 Center(
+                   child: Column(
+                     children: <Widget>[
+-                      Text(
+-                        gpsLocked ? speed.round().toString() : '--',
+-                        style: TextStyle(
+-                          color: Colors.white,
+-                          fontSize: compact ? 112 : 150,
+-                          height: 0.82,
+-                          fontWeight: FontWeight.w200,
+-                          letterSpacing: -7,
++                      if (gpsLocked)
++                        SizedBox(
++                          width: compact ? 250 : 330,
++                          child: TweenAnimationBuilder<double>(
++                            tween: Tween<double>(end: speed),
++                            duration: const Duration(milliseconds: 620),
++                            curve: Curves.easeInOutCubic,
++                            builder: (context, animatedSpeed, _) {
++                              return Text(
++                                animatedSpeed.round().toString(),
++                                textAlign: TextAlign.center,
++                                style: TextStyle(
++                                  color: Colors.white,
++                                  fontSize: compact ? 112 : 150,
++                                  height: 0.82,
++                                  fontWeight: FontWeight.w300,
++                                  letterSpacing: -6.5,
++                                  fontFeatures: const <ui.FontFeature>[
++                                    ui.FontFeature.tabularFigures(),
++                                  ],
++                                ),
++                              );
++                            },
++                          ),
++                        )
++                      else
++                        Text(
++                          '--',
++                          style: TextStyle(
++                            color: Colors.white,
++                            fontSize: compact ? 112 : 150,
++                            height: 0.82,
++                            fontWeight: FontWeight.w300,
++                            letterSpacing: -6.5,
++                          ),
+                         ),
+-                      ),
+                       SizedBox(height: compact ? 8 : 14),
+                       const Text(
+                         'KM/H',
+@@ -365,7 +406,34 @@
+                     Expanded(
+                       child: _InstrumentMetric(
+                         label: 'EST. ENGINE RPM',
+-                        value: gpsLocked ? rpm.round().toString() : '--',
++                        value: gpsLocked ? null : '--',
++                        valueWidget: gpsLocked
++                            ? SizedBox(
++                                width: 110,
++                                child: TweenAnimationBuilder<double>(
++                                  tween: Tween<double>(end: rpm),
++                                  duration: const Duration(milliseconds: 680),
++                                  curve: Curves.easeInOutCubic,
++                                  builder: (context, animatedRpm, _) {
++                                    final displayRpm =
++                                        (animatedRpm / 10).round() * 10;
++                                    return Text(
++                                      displayRpm.toString(),
++                                      style: const TextStyle(
++                                        color: Colors.white,
++                                        fontSize: 28,
++                                        height: 1,
++                                        fontWeight: FontWeight.w600,
++                                        letterSpacing: -1.1,
++                                        fontFeatures: <ui.FontFeature>[
++                                          ui.FontFeature.tabularFigures(),
++                                        ],
++                                      ),
++                                    );
++                                  },
++                                ),
++                              )
++                            : null,
+                         suffix: 'rpm',
+                         warning: true,
+                       ),
+@@ -804,13 +872,15 @@
+ class _InstrumentMetric extends StatelessWidget {
+   const _InstrumentMetric({
+     required this.label,
+-    required this.value,
+     required this.suffix,
++    this.value,
++    this.valueWidget,
+     this.warning = false,
+-  });
++  }) : assert(value != null || valueWidget != null);
+ 
+   final String label;
+-  final String value;
++  final String? value;
++  final Widget? valueWidget;
+   final String suffix;
+   final bool warning;
+ 
+@@ -834,16 +904,20 @@
+           Row(
+             crossAxisAlignment: CrossAxisAlignment.end,
+             children: <Widget>[
+-              Text(
+-                value,
+-                style: const TextStyle(
+-                  color: Colors.white,
+-                  fontSize: 28,
+-                  height: 1,
+-                  fontWeight: FontWeight.w500,
+-                  letterSpacing: -1.1,
+-                ),
+-              ),
++              valueWidget ??
++                  Text(
++                    value!,
++                    style: const TextStyle(
++                      color: Colors.white,
++                      fontSize: 28,
++                      height: 1,
++                      fontWeight: FontWeight.w500,
++                      letterSpacing: -1.1,
++                      fontFeatures: <ui.FontFeature>[
++                        ui.FontFeature.tabularFigures(),
++                      ],
++                    ),
++                  ),
+               const SizedBox(width: 5),
+               Padding(
+                 padding: const EdgeInsets.only(bottom: 2),
+@@ -1242,6 +1316,30 @@
+       ..color = const Color(0xFF1C2530);
+     canvas.drawArc(rect, start, sweep, false, base);
+ 
++    for (var i = 0; i <= 24; i++) {
++      final tickFraction = i / 24;
++      final angle = start + (sweep * tickFraction);
++      final major = i.isEven;
++      final outerRadius = radius - 9;
++      final innerRadius = outerRadius - (major ? 10 : 5);
++      final tickPaint = Paint()
++        ..style = PaintingStyle.stroke
++        ..strokeCap = StrokeCap.round
++        ..strokeWidth = major ? 2.0 : 1.1
++        ..color = tickFraction <= speedFraction
++            ? const Color(0xFFBFC8D2)
++            : const Color(0xFF303A46);
++      final outer = Offset(
++        center.dx + math.cos(angle) * outerRadius,
++        center.dy + math.sin(angle) * outerRadius,
++      );
++      final inner = Offset(
++        center.dx + math.cos(angle) * innerRadius,
++        center.dy + math.sin(angle) * innerRadius,
++      );
++      canvas.drawLine(inner, outer, tickPaint);
++    }
++
+     final speedPaint = Paint()
+       ..style = PaintingStyle.stroke
+       ..strokeCap = StrokeCap.round
+--- a/scdrive-app/lib/services/drive_telemetry_service.dart
++++ b/scdrive-app/lib/services/drive_telemetry_service.dart
+@@ -227,19 +227,24 @@
+     final now = position.timestamp;
+     final rawSpeedMps = math.max(0.0, position.speed).toDouble();
+     final previousSpeed = _smoothedSpeedMps;
++    final hadLocationFix = _hasLocationFix;
+ 
+-    // Light low-pass filter to avoid a nervous speed display on inexpensive
+-    // head-unit GPS receivers.
++    // GPS head units often update around once per second. Keep the sensor
++    // target stable here, then let the UI interpolate smoothly between fixes.
++    final speedTarget = rawSpeedMps < 0.45 ? 0.0 : rawSpeedMps;
+     _smoothedSpeedMps = previousSpeed == 0
+-        ? rawSpeedMps
+-        : (previousSpeed * 0.62) + (rawSpeedMps * 0.38);
++        ? speedTarget
++        : (previousSpeed * 0.68) + (speedTarget * 0.32);
++    if (speedTarget == 0 && _smoothedSpeedMps < 0.30) {
++      _smoothedSpeedMps = 0;
++    }
+ 
+     if (_lastSampleAt != null) {
+       final dt = now.difference(_lastSampleAt!).inMilliseconds / 1000;
+       if (dt > 0.15 && dt < 8) {
+         final rawAcceleration = (_smoothedSpeedMps - previousSpeed) / dt;
+-        _accelerationMps2 = (_accelerationMps2 * 0.68) +
+-            (rawAcceleration.clamp(-4.5, 4.5) * 0.32);
++        _accelerationMps2 = (_accelerationMps2 * 0.78) +
++            (rawAcceleration.clamp(-4.0, 4.0) * 0.22);
+       }
+     }
+ 
+@@ -251,14 +256,22 @@
+     _longitude = position.longitude;
+     _hasLocationFix = true;
+     _gpsState = GpsState.locked;
+-    _estimatedCvtRatio = TeanaJ32Powertrain.estimatedCvtRatio(
++    final targetCvtRatio = TeanaJ32Powertrain.estimatedCvtRatio(
+       speedKph: _speedKph,
+       accelerationMps2: _accelerationMps2,
+     );
+-    _estimatedRpm = TeanaJ32Powertrain.estimatedEngineRpm(
++    final targetRpm = TeanaJ32Powertrain.estimatedEngineRpm(
+       speedKph: _speedKph,
+       accelerationMps2: _accelerationMps2,
+     );
++    if (!hadLocationFix) {
++      _estimatedCvtRatio = targetCvtRatio;
++      _estimatedRpm = targetRpm;
++    } else {
++      _estimatedCvtRatio = (_estimatedCvtRatio * 0.72) +
++          (targetCvtRatio * 0.28);
++      _estimatedRpm = (_estimatedRpm * 0.72) + (targetRpm * 0.28);
++    }
+     _errorMessage = null;
+     notifyListeners();
+   }
+--- a/scdrive-app/lib/domain/teana_j32_powertrain.dart
++++ b/scdrive-app/lib/domain/teana_j32_powertrain.dart
+@@ -51,8 +51,8 @@
+     // Cruise RPM target approximates a relaxed CVT calibration. Positive GPS
+     // acceleration raises the target to imitate CVT kick-down/ratio hold.
+     final cruiseTarget = 1120 + (speedKph * 4.8);
+-    final accelBoost = math.max(0, accelerationMps2) * 1350;
+-    final decelReduction = math.min(0, accelerationMps2) * 120;
++    final accelBoost = math.max(0, accelerationMps2) * 900;
++    final decelReduction = math.min(0, accelerationMps2) * 80;
+     final targetRpm = (cruiseTarget + accelBoost + decelReduction)
+         .clamp(idleRpm, displayMaxRpm)
+         .toDouble();
+--- a/scdrive-app/pubspec.yaml
++++ b/scdrive-app/pubspec.yaml
+@@ -1,7 +1,7 @@
+ name: sc_drive
+ description: SC Drive head-unit dashboard with GPS telemetry, live weather, Teana J32 estimated RPM, Spotify controls, CarPlay and Android Auto support.
+ publish_to: "none"
+-version: 1.4.0+5
++version: 1.4.1+6
+ 
+ environment:
+   sdk: ">=3.6.0 <4.0.0"
