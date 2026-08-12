@@ -1,0 +1,73 @@
+name: Build SC Drive APK
+
+on:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - 'build-assets/SC_Drive_v1.4.0_GPS_Auto_Offline_HeadUnit.zip'
+      - '.github/workflows/sc-drive-apk.yml'
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter 3.35.7
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+
+      - name: Extract SC Drive
+        run: |
+          rm -rf scdrive-src
+          mkdir scdrive-src
+          unzip -q build-assets/SC_Drive_v1.4.0_GPS_Auto_Offline_HeadUnit.zip -d scdrive-src
+
+      - name: Flutter doctor
+        working-directory: scdrive-src/app
+        run: flutter doctor -v
+
+      - name: Ensure Android scaffold
+        working-directory: scdrive-src/app
+        run: ./scripts/ensure_android_scaffold.sh
+
+      - name: Get dependencies
+        working-directory: scdrive-src/app
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: scdrive-src/app
+        run: flutter analyze
+
+      - name: Test
+        working-directory: scdrive-src/app
+        run: flutter test
+
+      - name: Build release APK
+        working-directory: scdrive-src/app
+        run: flutter build apk --release --dart-define=SPOTIFY_CLIENT_ID=
+
+      - name: Package APK
+        run: |
+          mkdir -p out
+          cp scdrive-src/app/build/app/outputs/flutter-apk/app-release.apk out/SC_Drive-v1.4.0-gps-auto-headunit.apk
+          sha256sum out/SC_Drive-v1.4.0-gps-auto-headunit.apk > out/SC_Drive-v1.4.0-gps-auto-headunit.apk.sha256
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.4.0-APK
+          path: out/*
+          if-no-files-found: error
