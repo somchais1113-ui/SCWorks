@@ -1,0 +1,87 @@
+name: Diagnose SC Drive APK
+
+on:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - '.github/workflows/sc-drive-diagnose.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: sc-drive-apk-build
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+      - name: Prepare SC Drive
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat build-assets/scdrive-src/{00,01,02,03,04,05,06,07}.b64 > /tmp/scdrive-src.b64
+          base64 -d /tmp/scdrive-src.b64 > /tmp/scdrive-src.tar.gz
+          echo '8c52e682bd9c76af7e11dfd153a04809c7a36d5edd79a1b58df52e3cec4aef6c  /tmp/scdrive-src.tar.gz' | sha256sum -c -
+          rm -rf /tmp/scdrive-unpack scdrive-app
+          mkdir -p /tmp/scdrive-unpack
+          tar -xzf /tmp/scdrive-src.tar.gz -C /tmp/scdrive-unpack
+          flutter create --platforms=android --org com.scdeport --project-name sc_drive scdrive-app
+          SRC=/tmp/scdrive-unpack/scdrive_headunit_bundle
+          cp -a "$SRC/lib" scdrive-app/
+          cp "$SRC/pubspec.yaml" scdrive-app/pubspec.yaml
+          cp "$SRC/analysis_options.yaml" scdrive-app/analysis_options.yaml
+          rm -rf scdrive-app/test
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('scdrive-app/pubspec.yaml'); s=p.read_text(); s=s.replace('  flutter_carplay:\n    path: ../packages/flutter_carplay\n','  flutter_carplay: ^1.6.4\n').replace('geolocator: ^14.0.3','geolocator: 14.0.2'); p.write_text(s)
+          h=Path('scdrive-app/lib/features/head_unit/head_unit_screen.dart'); s=h.read_text().replace('Icons.rainy','Icons.water_drop_rounded'); h.write_text(s)
+          d=Path('scdrive-app/lib/services/drive_telemetry_service.dart'); s=d.read_text().replace('final rawSpeedMps = math.max(0, position.speed);','final rawSpeedMps = math.max(0.0, position.speed).toDouble();'); d.write_text(s)
+          g=Path('scdrive-app/android/app/build.gradle.kts'); s=g.read_text().replace('com.scdeport.sc_drive','com.scdeport.scdrive'); marker='        versionName = flutter.versionName\n'; s=s.replace(marker,marker+'        manifestPlaceholders["appAuthRedirectScheme"] = "scdrive-login"\n'); g.write_text(s)
+          PY
+          cp "$SRC/android_overlay/AndroidManifest.xml" scdrive-app/android/app/src/main/AndroidManifest.xml
+          rm -rf scdrive-app/android/app/src/main/kotlin/com/scdeport/sc_drive
+          mkdir -p scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive
+          cp "$SRC/android_overlay/MainActivity.kt" scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt
+          mkdir -p scdrive-app/android/app/src/main/res/xml
+          printf '%s\n' '<automotiveApp xmlns:android="http://schemas.android.com/apk/res/android"><uses name="template"/></automotiveApp>' > scdrive-app/android/app/src/main/res/xml/automotive_app_desc.xml
+          cd scdrive-app
+          flutter pub get
+          flutter analyze
+      - name: Build and capture
+        id: build
+        working-directory: scdrive-app
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          flutter build apk --release --dart-define=SPOTIFY_CLIENT_ID= 2>&1 | tee ../latest-build.log
+          STATUS=${PIPESTATUS[0]}
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Publish build log to branch
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p build-results
+          cp latest-build.log build-results/latest-build.log
+          printf 'status=%s\nrun=%s\n' '${{ steps.build.outputs.status }}' '${{ github.run_id }}' > build-results/latest-status.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add build-results/latest-build.log build-results/latest-status.txt
+          git commit -m 'Record SC Drive build diagnostics [skip ci]' || true
+          git push origin HEAD:sc-drive-apk-build
+      - name: Fail if build failed
+        if: steps.build.outputs.status != '0'
+        run: exit 1
