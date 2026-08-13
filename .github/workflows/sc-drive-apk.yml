@@ -75,6 +75,30 @@ jobs:
           grep -n 'com.google.android.geo.API_KEY' scdrive-app/android/app/src/main/AndroidManifest.xml
           grep -n 'SC_DRIVE_KEYSTORE_PATH' scdrive-app/android/app/build.gradle.kts
 
+      - name: Apply v1.5.1 clock legibility update
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          head = Path('scdrive-app/lib/features/head_unit/head_unit_screen.dart')
+          s = head.read_text()
+          old = 'fontSize: compact ? 46 : 58,'
+          new = 'fontSize: compact ? 53 : 67,'
+          if old not in s:
+              raise SystemExit('Expected v1.5.0 clock size not found')
+          head.write_text(s.replace(old, new, 1))
+
+          pub = Path('scdrive-app/pubspec.yaml')
+          p = pub.read_text()
+          if 'version: 1.5.0+7' not in p:
+              raise SystemExit('Expected v1.5.0 version not found')
+          pub.write_text(p.replace('version: 1.5.0+7', 'version: 1.5.1+8', 1))
+          PY
+          grep -n '^version: 1.5.1+8' scdrive-app/pubspec.yaml
+          grep -n 'fontSize: compact ? 53 : 67' scdrive-app/lib/features/head_unit/head_unit_screen.dart
+
       - name: Upgrade Kotlin for Google Maps
         shell: bash
         run: |
@@ -137,7 +161,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SC-Drive-v1.5.0-build-log
+          name: SC-Drive-v1.5.1-build-log
           path: build.log
           if-no-files-found: error
           retention-days: 14
@@ -152,14 +176,14 @@ jobs:
           set -euxo pipefail
           test -s scdrive-app/build/app/outputs/flutter-apk/app-release.apk
           mkdir -p out
-          cp scdrive-app/build/app/outputs/flutter-apk/app-release.apk out/SC_Drive-v1.5.0-nissan-map-deck-headunit.apk
-          sha256sum out/SC_Drive-v1.5.0-nissan-map-deck-headunit.apk | tee out/SC_Drive-v1.5.0-nissan-map-deck-headunit.apk.sha256
+          cp scdrive-app/build/app/outputs/flutter-apk/app-release.apk out/SC_Drive-v1.5.1-clock-115pct-nissan-map-deck-headunit.apk
+          sha256sum out/SC_Drive-v1.5.1-clock-115pct-nissan-map-deck-headunit.apk | tee out/SC_Drive-v1.5.1-clock-115pct-nissan-map-deck-headunit.apk.sha256
           ls -lh out/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SC-Drive-v1.5.0-Nissan-Map-Deck-APK
+          name: SC-Drive-v1.5.1-Clock-115pct-APK
           path: out/*
           if-no-files-found: error
           retention-days: 14
