@@ -1,0 +1,29 @@
+name: Export Android APK Signer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - '.github/workflows/export-apksigner.yml'
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Locate Android apksigner
+        shell: bash
+        run: |
+          set -euxo pipefail
+          TOOLS_DIR="$(find "$ANDROID_HOME/build-tools" -maxdepth 1 -mindepth 1 -type d | sort -V | tail -1)"
+          test -f "$TOOLS_DIR/lib/apksigner.jar"
+          mkdir -p out
+          cp "$TOOLS_DIR/lib/apksigner.jar" out/apksigner.jar
+          sha256sum out/apksigner.jar | tee out/apksigner.jar.sha256
+
+      - name: Upload apksigner
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apksigner-tool
+          path: out/*
+          retention-days: 7
