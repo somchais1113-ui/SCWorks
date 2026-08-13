@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Set up Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -46,9 +46,7 @@ jobs:
           rm -rf scdrive-app/test scdrive-app/android/app/src/main/kotlin/com/scdeport/sc_drive
           mkdir -p scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive scdrive-app/android/app/src/main/res/xml
           cp "$SRC/android_overlay/MainActivity.kt" scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt
-          cat > scdrive-app/android/app/src/main/res/xml/automotive_app_desc.xml <<'XML'
-          <automotiveApp xmlns:android="http://schemas.android.com/apk/res/android"><uses name="template"/></automotiveApp>
-          XML
+          printf '%s\n' '<automotiveApp xmlns:android="http://schemas.android.com/apk/res/android"><uses name="template"/></automotiveApp>' > scdrive-app/android/app/src/main/res/xml/automotive_app_desc.xml
 
       - name: Apply verified v1.5.0 overlay
         shell: bash
@@ -59,7 +57,7 @@ jobs:
           echo '4bf7a4f0676aeb4ec63622ec3f657e2452e931284a756c2f77884fb73ad493f3  /tmp/v150.tar.gz' | sha256sum -c -
           tar -xzf /tmp/v150.tar.gz -C scdrive-app
 
-      - name: Apply v1.5.1 clock update
+      - name: Apply v1.5.1 clock update and v1.5.2 hardening
         shell: bash
         run: |
           set -euxo pipefail
@@ -68,14 +66,7 @@ jobs:
           p=Path('scdrive-app/lib/features/head_unit/head_unit_screen.dart'); s=p.read_text()
           s=s.replace('fontSize: compact ? 46 : 58,','fontSize: compact ? 53 : 67,',1); p.write_text(s)
           p=Path('scdrive-app/pubspec.yaml'); s=p.read_text().replace('version: 1.5.0+7','version: 1.5.1+8',1); p.write_text(s)
-          PY
 
-      - name: Upgrade app Kotlin and apply v1.5.2 hardening
-        shell: bash
-        run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
           settings=Path('scdrive-app/android/settings.gradle.kts'); s=settings.read_text()
           s=s.replace('id("org.jetbrains.kotlin.android") version "2.1.0" apply false','id("org.jetbrains.kotlin.android") version "2.3.10" apply false'); settings.write_text(s)
           gradle=Path('scdrive-app/android/app/build.gradle.kts'); g=gradle.read_text()
@@ -103,37 +94,37 @@ jobs:
           if 'Timer? _connectionRefreshDebounce;' not in cs:
               cs=cs.replace('  Timer? _musicSyncDebounce;\n','  Timer? _musicSyncDebounce;\n  Timer? _connectionRefreshDebounce;\n',1)
           old_conn='''  void _handleConnectionChange(ConnectionStatusTypes status) {\n    connectionStatus.value = status;\n  }\n'''
-          new_conn='''  void _handleConnectionChange(ConnectionStatusTypes status) {\n    connectionStatus.value = status;\n\n    // A new Android Auto Session may be created while the headless engine is\n    // still alive. Re-send the root template after native runtime state has\n    // been cleared so reconnects never get stuck on the loading template.\n    if (status == ConnectionStatusTypes.connected) {\n      _connectionRefreshDebounce?.cancel();\n      _connectionRefreshDebounce = Timer(const Duration(milliseconds: 250), () {\n        unawaited(refreshVehicleDisplay());\n      });\n    }\n  }\n'''
+          new_conn='''  void _handleConnectionChange(ConnectionStatusTypes status) {\n    connectionStatus.value = status;\n\n    if (status == ConnectionStatusTypes.connected) {\n      _connectionRefreshDebounce?.cancel();\n      _connectionRefreshDebounce = Timer(const Duration(milliseconds: 250), () {\n        unawaited(refreshVehicleDisplay());\n      });\n    }\n  }\n'''
           if old_conn not in cs and '_connectionRefreshDebounce = Timer' not in cs:
               raise SystemExit('connection handler marker missing')
           cs=cs.replace(old_conn,new_conn,1)
           cs=cs.replace('    _musicSyncDebounce?.cancel();\n    _spotifyService.removeListener', '    _musicSyncDebounce?.cancel();\n    _connectionRefreshDebounce?.cancel();\n    _spotifyService.removeListener',1)
           car.write_text(cs)
           PY
-          grep -n '^version: 1.5.2+9' scdrive-app/pubspec.yaml
-          grep -n 'singleTask' scdrive-app/android/app/src/main/AndroidManifest.xml
-          grep -n '_connectionRefreshDebounce = Timer' scdrive-app/lib/services/car_integration_service.dart
 
       - name: Apply v1.5.4 Visual Master clean patch
         shell: bash
         run: |
           set -euxo pipefail
           base64 -d build-assets/scdrive-v154-clean.patch.gz.b64 > /tmp/scdrive-v154-clean.patch.gz
-          echo '5d279829f1f933ea943938bbeee1e252ead25aa7508f6093b12436459a2d1e37  /tmp/scdrive-v154-clean.patch.gz' | sha256sum -c -
+          echo '19e8acac02487cba288c2eec7d6d0fb3f7e9057a175a7593c6644954981f9c5a  /tmp/scdrive-v154-clean.patch.gz' | sha256sum -c -
           gzip -dc /tmp/scdrive-v154-clean.patch.gz > /tmp/scdrive-v154-clean.patch
-          echo '10e948da58e73d898015ca380aa98a771d9e00bcdb177f489b56b0669da3c8ac  /tmp/scdrive-v154-clean.patch' | sha256sum -c -
+          echo '747f09dc469b3cb7cd591c77868c6a54014f6337fe40f5378088998e3a57b1cd  /tmp/scdrive-v154-clean.patch' | sha256sum -c -
           cd scdrive-app
           patch -p1 --forward --batch < /tmp/scdrive-v154-clean.patch
           grep -n '^version: 1.5.4+11' pubspec.yaml
           grep -n 'LIVE MAP' lib/features/head_unit/drive_deck_panel.dart
+          grep -n 'class _InstrumentMetric' lib/features/head_unit/head_unit_screen.dart
+          grep -n 'class _PlayerButton' lib/features/head_unit/head_unit_screen.dart
           ! grep -q 'class _SmoothRollingNumber' lib/features/head_unit/head_unit_screen.dart
           ! grep -q 'class _DriveInfoPanel' lib/features/head_unit/head_unit_screen.dart
+          ! grep -q 'class _DeckLabel' lib/features/head_unit/drive_deck_panel.dart
 
       - name: Get dependencies
         working-directory: scdrive-app
         run: flutter pub get
 
-      - name: Harden local Android Auto plugin
+      - name: Harden Android Auto plugin
         shell: bash
         run: |
           set -euxo pipefail
@@ -141,17 +132,11 @@ jobs:
           import json, pathlib, urllib.parse
           cfg=json.load(open('scdrive-app/.dart_tool/package_config.json'))
           pkg=next(x for x in cfg['packages'] if x['name']=='flutter_carplay')
-          uri=pkg['rootUri']
-          base=pathlib.Path('scdrive-app/.dart_tool/package_config.json').resolve().parent
-          if uri.startswith('file:'):
-              path=pathlib.Path(urllib.parse.urlparse(uri).path)
-          else:
-              path=(base/pathlib.Path(uri)).resolve()
+          uri=pkg['rootUri']; base=pathlib.Path('scdrive-app/.dart_tool/package_config.json').resolve().parent
+          path=pathlib.Path(urllib.parse.urlparse(uri).path) if uri.startswith('file:') else (base/pathlib.Path(uri)).resolve()
           print(path)
           PY
           )
-          echo "flutter_carplay root: $PLUGIN_ROOT"
-          test -f "$PLUGIN_ROOT/android/src/main/kotlin/com/oguzhnatly/flutter_android_auto/AndroidAutoService.kt"
           export PLUGIN_ROOT
           python3 - <<'PY'
           import os
@@ -227,7 +212,10 @@ jobs:
 
       - name: Strict analyze
         working-directory: scdrive-app
-        run: flutter analyze
+        shell: bash
+        run: |
+          set -o pipefail
+          flutter analyze 2>&1 | tee ../analyze.log
 
       - name: Build release APK
         id: apk_build
@@ -245,13 +233,15 @@ jobs:
             --dart-define=SC_DRIVE_BUILD_PROFILE=ci-test 2>&1 | tee ../build.log
           STATUS=${PIPESTATUS[0]}; echo "status=$STATUS" >> "$GITHUB_OUTPUT"; exit 0
 
-      - name: Upload build log
+      - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SC-Drive-v1.5.4-build-log
-          path: build.log
-          if-no-files-found: error
+          name: SC-Drive-v1.5.4-diagnostics
+          path: |
+            analyze.log
+            build.log
+          if-no-files-found: warn
           retention-days: 14
       - name: Stop on build failure
         if: steps.apk_build.outputs.status != '0'
