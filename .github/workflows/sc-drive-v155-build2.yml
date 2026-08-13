@@ -1,0 +1,160 @@
+name: Build SC Drive v1.5.5 Clean APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - '.github/workflows/sc-drive-v155-build2.yml'
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+
+      - name: Rebuild v1.5.4 verified baseline
+        shell: bash
+        run: |
+          set -euxo pipefail
+          run_recipe() {
+            ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x| x["name"]==n}; abort("step not found: #{n}") unless s && s["run"]; print s["run"]' .github/workflows/sc-drive-apk.yml "$1" > /tmp/scdrive-step.sh
+            bash /tmp/scdrive-step.sh
+          }
+          run_recipe 'Reconstruct verified base source'
+          run_recipe 'Generate Android scaffold'
+          run_recipe 'Apply verified v1.5.0 overlay'
+          run_recipe 'Apply v1.5.1 clock update and v1.5.2 hardening'
+          run_recipe 'Apply v1.5.4 Visual Master clean patch'
+
+      - name: Apply v1.5.5 Nissan and Google Maps changes cleanly
+        shell: bash
+        run: |
+          set -euxo pipefail
+          base64 -d build-assets/scdrive-v155-nissan-map.patch.gz.b64 > /tmp/v155.patch.gz
+          echo 'fe04b55cfedd3a7f6de5eedd6df2fdcc19ae607b5a06c94358fbbd7b63707e91  /tmp/v155.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/v155.patch.gz > /tmp/v155.patch
+          echo 'c28e085ee5163d964bb6866470d452b7eb8d5b7498e26e9ffc89db62692bf36f  /tmp/v155.patch' | sha256sum -c -
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          src=Path('/tmp/v155.patch').read_text()
+          drop={'android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt','scripts/build_apk.sh'}
+          parts=re.split(r'(?=^diff --git )', src, flags=re.M)
+          Path('/tmp/v155-safe.patch').write_text(''.join(
+            p for p in parts
+            if not (p.startswith('diff --git ') and (lambda m: m and m.group(1) in drop)(re.match(r'diff --git a/(\S+) b/(\S+)', p)))
+          ))
+          PY
+          cd scdrive-app
+          mkdir -p assets/fonts scripts
+          patch -p1 --forward --batch < /tmp/v155-safe.patch
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt')
+          s=p.read_text()
+          marker='''                    when {\n                        method.contains("home")'''
+          repl='''                    when {\n                        method == "isgooglemapsconfigured" ->\n                            result.success(isGoogleMapsConfigured())\n                        method.contains("home")'''
+          if 'method == "isgooglemapsconfigured"' not in s:
+              if marker not in s: raise SystemExit('MainActivity handler marker missing')
+              s=s.replace(marker,repl,1)
+          marker2='''    private fun isDefaultHome(): Boolean {'''
+          method='''    private fun isGoogleMapsConfigured(): Boolean {\n        return try {\n            val appInfo = packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)\n            val key = appInfo.metaData?.getString("com.google.android.geo.API_KEY")?.trim().orEmpty()\n            key.isNotEmpty() && key != "SC_DRIVE_MAPS_DISABLED"\n        } catch (_: Exception) {\n            false\n        }\n    }\n\n'''
+          if 'private fun isGoogleMapsConfigured()' not in s:
+              if marker2 not in s: raise SystemExit('MainActivity method marker missing')
+              s=s.replace(marker2,method+marker2,1)
+          p.write_text(s)
+
+          p=Path('lib/features/head_unit/drive_deck_panel.dart')
+          s=p.read_text()
+          s=s.replace('            mapType: MapType.normal,\n','')
+          s=s.replace('            buildingsEnabled: true,\n','')
+          p.write_text(s)
+          PY
+          grep -n '^version: 1.5.5+12' pubspec.yaml
+          grep -n "fontFamily: 'NissanOpti'" lib/app/app.dart
+          grep -n 'isGoogleMapsConfigured' lib/services/head_unit_platform_service.dart
+          grep -n 'isgooglemapsconfigured' android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt
+          ! grep -q 'mapType: MapType.normal' lib/features/head_unit/drive_deck_panel.dart
+          ! grep -q 'buildingsEnabled: true' lib/features/head_unit/drive_deck_panel.dart
+          REGULAR_FONT="$(fc-match -f '%{file}' 'DejaVu Sans' | head -1)"
+          ITALIC_FONT="$(fc-match -f '%{file}' 'DejaVu Sans:slant=italic' | head -1)"
+          cp "$REGULAR_FONT" assets/fonts/NissanOpti.otf
+          cp "$ITALIC_FONT" assets/fonts/NissanOpti-Italic.otf
+
+      - name: Dependencies and Android Auto hardening
+        shell: bash
+        run: |
+          set -euxo pipefail
+          (cd scdrive-app && flutter pub get)
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x| x["name"]==n}; abort("step not found") unless s && s["run"]; print s["run"]' .github/workflows/sc-drive-apk.yml 'Harden Android Auto plugin' > /tmp/harden.sh
+          bash /tmp/harden.sh
+
+      - name: Strict analyze
+        working-directory: scdrive-app
+        shell: bash
+        run: |
+          set -o pipefail
+          flutter analyze 2>&1 | tee ../analyze-v155.log
+
+      - name: Build release APK
+        id: build
+        working-directory: scdrive-app
+        env:
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        shell: bash
+        run: |
+          set +e; set -o pipefail
+          flutter build apk --release \
+            --dart-define=SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID:-}" \
+            --dart-define=SC_DRIVE_BUILD_PROFILE=ci-test 2>&1 | tee ../build-v155.log
+          S=${PIPESTATUS[0]}; echo "status=$S" >> "$GITHUB_OUTPUT"; exit 0
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.5.5-clean-diagnostics
+          path: |
+            analyze-v155.log
+            build-v155.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Stop on build failure
+        if: steps.build.outputs.status != '0'
+        run: exit 1
+
+      - name: Verify and package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          mkdir -p out/tools
+          cp "$APK" out/SC_Drive-v1.5.5-CI-placeholder-font.apk
+          sha256sum out/SC_Drive-v1.5.5-CI-placeholder-font.apk > out/SC_Drive-v1.5.5-CI-placeholder-font.apk.sha256
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          cp "$BT/apksigner" out/tools/apksigner
+          cp "$BT/zipalign" out/tools/zipalign
+          chmod +x out/tools/apksigner out/tools/zipalign
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.5.5-CLEAN-APK-AND-TOOLS
+          path: out/*
+          if-no-files-found: error
+          retention-days: 14
