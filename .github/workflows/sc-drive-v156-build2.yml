@@ -1,0 +1,79 @@
+name: Build SC Drive v1.5.6 Final Candidate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths: [ '.github/workflows/sc-drive-v156-build2.yml' ]
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: '17' }
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: '3.35.7', channel: stable, cache: true }
+
+      - name: Reconstruct v1.5.6
+        shell: bash
+        run: |
+          set -euxo pipefail
+          run_step() {
+            ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v156-build.yml "$1" >/tmp/v156-step.sh
+            bash /tmp/v156-step.sh
+          }
+          run_step 'Reconstruct verified v1.5.5 baseline'
+          run_step 'Apply v1.5.6 Spotify and dashboard revision'
+          # MapType.normal is already the Google Maps default. Removing the
+          # explicit argument keeps behavior identical and satisfies strict lint.
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('scdrive-app/lib/features/head_unit/drive_deck_panel.dart')
+          s=p.read_text().replace('            mapType: MapType.normal,\n','',1)
+          p.write_text(s)
+          PY
+          grep -n '^version: 1.5.6+13' scdrive-app/pubspec.yaml
+          grep -n 'c5d101a6669743f6ac6663b5a9c7d35a' scdrive-app/lib/app/app_config.dart
+          grep -n 'cardashboard://spotify-callback' scdrive-app/lib/app/app_config.dart
+          grep -n 'fontSize: widget.compact ? 113 : 151' scdrive-app/lib/features/head_unit/head_unit_screen.dart
+          ! grep -q 'mapType: MapType.normal' scdrive-app/lib/features/head_unit/drive_deck_panel.dart
+
+      - name: Strict analyze
+        working-directory: scdrive-app
+        run: flutter analyze
+
+      - name: Build release APK
+        working-directory: scdrive-app
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: |
+          flutter build apk --release \
+            --dart-define=SPOTIFY_CLIENT_ID=c5d101a6669743f6ac6663b5a9c7d35a \
+            --dart-define=SC_DRIVE_BUILD_PROFILE=production
+
+      - name: Verify and package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          mkdir -p out/tools
+          cp "$APK" out/SC_Drive-v1.5.6-CI-placeholder-font.apk
+          sha256sum out/SC_Drive-v1.5.6-CI-placeholder-font.apk >out/SC_Drive-v1.5.6-CI-placeholder-font.apk.sha256
+          tar -czf out/SC_Drive-v1.5.6-CI-Source.tar.gz -C scdrive-app .
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          cp "$BT/apksigner" out/tools/apksigner
+          cp "$BT/zipalign" out/tools/zipalign
+          chmod +x out/tools/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.5.6-FINAL-CANDIDATE
+          path: out/*
+          if-no-files-found: error
+          retention-days: 14
