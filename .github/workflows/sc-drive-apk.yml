@@ -120,6 +120,31 @@ jobs:
           ! grep -q 'class _DriveInfoPanel' lib/features/head_unit/head_unit_screen.dart
           ! grep -q 'class _DeckLabel' lib/features/head_unit/drive_deck_panel.dart
 
+      - name: Apply v1.5.5 Nissan font and Google Maps configuration patch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          base64 -d build-assets/scdrive-v155-nissan-map.patch.gz.b64 > /tmp/scdrive-v155.patch.gz
+          echo 'fe04b55cfedd3a7f6de5eedd6df2fdcc19ae607b5a06c94358fbbd7b63707e91  /tmp/scdrive-v155.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/scdrive-v155.patch.gz > /tmp/scdrive-v155.patch
+          echo 'c28e085ee5163d964bb6866470d452b7eb8d5b7498e26e9ffc89db62692bf36f  /tmp/scdrive-v155.patch' | sha256sum -c -
+          cd scdrive-app
+          patch -p1 --forward --batch < /tmp/scdrive-v155.patch
+          grep -n '^version: 1.5.5+12' pubspec.yaml
+          grep -n "fontFamily: 'NissanOpti'" lib/app/app.dart
+          grep -n 'MapType.normal' lib/features/head_unit/drive_deck_panel.dart
+          grep -n 'isGoogleMapsConfigured' lib/services/head_unit_platform_service.dart
+
+          # CI compile validation only. Do not redistribute the user's Nissan font.
+          # The final local source uses the user's own NissanOpti files.
+          mkdir -p assets/fonts
+          REGULAR_FONT="$(fc-match -f '%{file}' 'DejaVu Sans' | head -1)"
+          ITALIC_FONT="$(fc-match -f '%{file}' 'DejaVu Sans:slant=italic' | head -1)"
+          test -s "$REGULAR_FONT"
+          test -s "$ITALIC_FONT"
+          cp "$REGULAR_FONT" assets/fonts/NissanOpti.otf
+          cp "$ITALIC_FONT" assets/fonts/NissanOpti-Italic.otf
+
       - name: Get dependencies
         working-directory: scdrive-app
         run: flutter pub get
@@ -227,9 +252,9 @@ jobs:
         shell: bash
         run: |
           set +e; set -o pipefail
+          export GOOGLE_MAPS_API_KEY="${GOOGLE_MAPS_API_KEY:-CI_PLACEHOLDER_MAPS_KEY}"
           flutter build apk --release \
             --dart-define=SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID:-}" \
-            --dart-define=GOOGLE_MAPS_API_KEY="${GOOGLE_MAPS_API_KEY:-}" \
             --dart-define=SC_DRIVE_BUILD_PROFILE=ci-test 2>&1 | tee ../build.log
           STATUS=${PIPESTATUS[0]}; echo "status=$STATUS" >> "$GITHUB_OUTPUT"; exit 0
 
@@ -237,7 +262,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SC-Drive-v1.5.4-diagnostics
+          name: SC-Drive-v1.5.5-diagnostics
           path: |
             analyze.log
             build.log
@@ -253,12 +278,12 @@ jobs:
           test -s scdrive-app/build/app/outputs/flutter-apk/app-release.apk
           unzip -t scdrive-app/build/app/outputs/flutter-apk/app-release.apk >/dev/null
           mkdir -p out
-          cp scdrive-app/build/app/outputs/flutter-apk/app-release.apk out/SC_Drive-v1.5.4-visual-master-clean-headunit.apk
-          sha256sum out/SC_Drive-v1.5.4-visual-master-clean-headunit.apk | tee out/SC_Drive-v1.5.4-visual-master-clean-headunit.apk.sha256
+          cp scdrive-app/build/app/outputs/flutter-apk/app-release.apk out/SC_Drive-v1.5.5-CI-ONLY-placeholder-font.apk
+          sha256sum out/SC_Drive-v1.5.5-CI-ONLY-placeholder-font.apk | tee out/SC_Drive-v1.5.5-CI-ONLY-placeholder-font.apk.sha256
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SC-Drive-v1.5.4-Visual-Master-Clean-APK
+          name: SC-Drive-v1.5.5-CI-Compile-Validation-PLACEHOLDER-FONT
           path: out/*
           if-no-files-found: error
           retention-days: 14
