@@ -1,0 +1,133 @@
+name: Build SC Drive v1.5.6 Candidate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths: [ '.github/workflows/sc-drive-v156-build.yml' ]
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: '17' }
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: '3.35.7', channel: stable, cache: true }
+
+      - name: Reconstruct verified v1.5.5 baseline
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); s=y["jobs"]["android"]["steps"].find{|x|x["name"]=="Reconstruct and harden v1.5.5"}; abort("v1.5.5 reconstruct step missing") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v155-build4.yml >/tmp/reconstruct-v155.sh
+          bash /tmp/reconstruct-v155.sh
+          test -f scdrive-app/pubspec.yaml
+          grep -n '^version: 1.5.5+12' scdrive-app/pubspec.yaml
+
+      - name: Apply v1.5.6 Spotify and dashboard revision
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # version
+          p=Path('scdrive-app/pubspec.yaml'); s=p.read_text()
+          s=s.replace('version: 1.5.5+12','version: 1.5.6+13')
+          p.write_text(s)
+
+          # Spotify public client config + redirect URI
+          p=Path('scdrive-app/lib/app/app_config.dart'); s=p.read_text()
+          old="""  /// Public Spotify Client ID. Do not place a Client Secret in a mobile app.\n  /// Build with: --dart-define=SPOTIFY_CLIENT_ID=your_client_id\n  static const String spotifyClientId = String.fromEnvironment(\n    'SPOTIFY_CLIENT_ID',\n  );\n\n  static const String spotifyRedirectUri = 'scdrive-login://callback';\n  static const String spotifyRedirectScheme = 'scdrive-login';\n"""
+          new="""  /// Public Spotify Client ID. Do not place a Client Secret in a mobile app.\n  /// The dashboard Client ID is a safe public mobile-app identifier and can\n  /// still be overridden at build time with --dart-define.\n  static const String spotifyClientId = String.fromEnvironment(\n    'SPOTIFY_CLIENT_ID',\n    defaultValue: 'c5d101a6669743f6ac6663b5a9c7d35a',\n  );\n\n  static const String spotifyRedirectUri = 'cardashboard://spotify-callback';\n  static const String spotifyRedirectScheme = 'cardashboard';\n"""
+          if old not in s: raise SystemExit('Spotify app_config baseline mismatch')
+          p.write_text(s.replace(old,new,1))
+
+          # Android AppAuth redirect scheme
+          p=Path('scdrive-app/android/app/build.gradle.kts'); s=p.read_text()
+          if 'import java.util.Properties\n' not in s:
+              s=s.replace('import org.jetbrains.kotlin.gradle.dsl.JvmTarget\n','import org.jetbrains.kotlin.gradle.dsl.JvmTarget\nimport java.util.Properties\n',1)
+          s=s.replace('java.util.Properties().apply {','Properties().apply {',1)
+          s=s.replace('manifestPlaceholders["appAuthRedirectScheme"] = "scdrive-login"','manifestPlaceholders["appAuthRedirectScheme"] = "cardashboard"',1)
+          p.write_text(s)
+
+          # Dashboard header: Weather centered, clock far right. Speed digits -10%.
+          p=Path('scdrive-app/lib/features/head_unit/head_unit_screen.dart'); s=p.read_text()
+          old="""  @override\n  Widget build(BuildContext context) {\n    return SizedBox(\n      height: compact ? 58 : 72,\n      child: Stack(\n        alignment: Alignment.center,\n        children: <Widget>[\n          const Align(\n            alignment: Alignment.centerLeft,\n            child: Row(\n              mainAxisSize: MainAxisSize.min,\n              children: <Widget>[\n                Text(\n                  'SC DRIVE',\n                  style: TextStyle(\n                    color: Colors.white,\n                    fontSize: 22,\n                    fontWeight: FontWeight.w800,\n                    letterSpacing: 0.5,\n                  ),\n                ),\n                SizedBox(width: 14),\n                SizedBox(\n                  height: 27,\n                  child: VerticalDivider(\n                    width: 1,\n                    thickness: 1,\n                    color: Color(0xFF6F7884),\n                  ),\n                ),\n                SizedBox(width: 14),\n                Text(\n                  'NISSAN TEANA J32',\n                  style: TextStyle(\n                    color: Color(0xFF8A8F98),\n                    fontSize: 17,\n                    fontWeight: FontWeight.w500,\n                    letterSpacing: 0.2,\n                  ),\n                ),\n              ],\n            ),\n          ),\n          Text(\n            time,\n            style: TextStyle(\n              color: const Color(0xFFE9EBEE),\n              fontSize: compact ? 53 : 67,\n              height: 0.9,\n              fontWeight: FontWeight.w300,\n              letterSpacing: -2.2,\n              fontFeatures: const <ui.FontFeature>[\n                ui.FontFeature.tabularFigures(),\n              ],\n            ),\n          ),\n          if (weather.snapshot != null)\n            Align(\n              alignment: Alignment.centerRight,\n              child: _WeatherTopChip(\n                snapshot: weather.snapshot!,\n                compact: compact,\n                onTap: onWeatherTap,\n              ),\n            ),\n        ],\n      ),\n    );\n  }\n}\n"""
+          new="""  @override\n  Widget build(BuildContext context) {\n    return SizedBox(\n      height: compact ? 58 : 72,\n      child: Row(\n        children: <Widget>[\n          const Expanded(\n            flex: 4,\n            child: Align(\n              alignment: Alignment.centerLeft,\n              child: Row(\n                mainAxisSize: MainAxisSize.min,\n                children: <Widget>[\n                  Text(\n                    'SC DRIVE',\n                    style: TextStyle(\n                      color: Colors.white,\n                      fontSize: 22,\n                      fontWeight: FontWeight.w800,\n                      letterSpacing: 0.5,\n                    ),\n                  ),\n                  SizedBox(width: 14),\n                  SizedBox(\n                    height: 27,\n                    child: VerticalDivider(\n                      width: 1,\n                      thickness: 1,\n                      color: Color(0xFF6F7884),\n                    ),\n                  ),\n                  SizedBox(width: 14),\n                  Text(\n                    'NISSAN TEANA J32',\n                    style: TextStyle(\n                      color: Color(0xFF8A8F98),\n                      fontSize: 17,\n                      fontWeight: FontWeight.w500,\n                      letterSpacing: 0.2,\n                    ),\n                  ),\n                ],\n              ),\n            ),\n          ),\n          Expanded(\n            flex: 4,\n            child: Center(\n              child: weather.snapshot == null\n                  ? const SizedBox.shrink()\n                  : _WeatherTopChip(\n                      snapshot: weather.snapshot!,\n                      compact: compact,\n                      onTap: onWeatherTap,\n                    ),\n            ),\n          ),\n          Expanded(\n            flex: 2,\n            child: Align(\n              alignment: Alignment.centerRight,\n              child: Text(\n                time,\n                textAlign: TextAlign.right,\n                style: TextStyle(\n                  color: const Color(0xFFE9EBEE),\n                  fontSize: compact ? 48 : 60,\n                  height: 0.9,\n                  fontWeight: FontWeight.w300,\n                  letterSpacing: -1.8,\n                  fontFeatures: const <ui.FontFeature>[\n                    ui.FontFeature.tabularFigures(),\n                  ],\n                ),\n              ),\n            ),\n          ),\n        ],\n      ),\n    );\n  }\n}\n"""
+          if old not in s: raise SystemExit('Top bar baseline mismatch')
+          s=s.replace(old,new,1)
+          s=s.replace('width: widget.compact ? 250 : 330,','width: widget.compact ? 232 : 300,',1)
+          s=s.replace('fontSize: widget.compact ? 126 : 168,','fontSize: widget.compact ? 113 : 151,',1)
+          # slightly tighter weather group for centered placement
+          s=s.replace('padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),','padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),',1)
+          s=s.replace('size: compact ? 22 : 28,','size: compact ? 20 : 24,',1)
+          s=s.replace('fontSize: compact ? 19 : 22,','fontSize: compact ? 18 : 20,',1)
+          # only within weather chip these repeated replacements are safe enough for first instances
+          weather_pos=s.find('class _WeatherTopChip')
+          if weather_pos >= 0:
+              head=s[:weather_pos]; tail=s[weather_pos:]
+              tail=tail.replace('const SizedBox(width: 20),','const SizedBox(width: 16),',2)
+              tail=tail.replace('fontSize: compact ? 13 : 15,','fontSize: compact ? 12 : 14,',2)
+              s=head+tail
+          p.write_text(s)
+
+          # Keep Google map explicitly normal/road map.
+          p=Path('scdrive-app/lib/features/head_unit/drive_deck_panel.dart'); s=p.read_text()
+          if 'mapType: MapType.normal,' not in s:
+              s=s.replace('            trafficEnabled: true,\n','            trafficEnabled: true,\n            mapType: MapType.normal,\n',1)
+          p.write_text(s)
+
+          # User-facing fallback copy is no longer a build-time setup error.
+          p=Path('scdrive-app/lib/services/spotify_service.dart'); s=p.read_text()
+          s=s.replace('Spotify Client ID is not configured. Build with SPOTIFY_CLIENT_ID.','Spotify Client ID is not configured.')
+          p.write_text(s)
+          p=Path('scdrive-app/lib/features/music/music_screen.dart'); s=p.read_text()
+          s=s.replace('Developer setup required: build with SPOTIFY_CLIENT_ID first.','Spotify developer setup is required. Configure Client ID and redirect URI.')
+          p.write_text(s)
+          PY
+          grep -n '^version: 1.5.6+13' scdrive-app/pubspec.yaml
+          grep -n 'c5d101a6669743f6ac6663b5a9c7d35a' scdrive-app/lib/app/app_config.dart
+          grep -n 'cardashboard://spotify-callback' scdrive-app/lib/app/app_config.dart
+          grep -n 'appAuthRedirectScheme.*cardashboard' scdrive-app/android/app/build.gradle.kts
+          grep -n 'fontSize: widget.compact ? 113 : 151' scdrive-app/lib/features/head_unit/head_unit_screen.dart
+          grep -n 'mapType: MapType.normal' scdrive-app/lib/features/head_unit/drive_deck_panel.dart
+
+      - name: Strict analyze
+        working-directory: scdrive-app
+        run: flutter analyze
+
+      - name: Build release APK
+        working-directory: scdrive-app
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: |
+          flutter build apk --release \
+            --dart-define=SPOTIFY_CLIENT_ID=c5d101a6669743f6ac6663b5a9c7d35a \
+            --dart-define=SC_DRIVE_BUILD_PROFILE=production
+
+      - name: Verify and package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          mkdir -p out/tools
+          cp "$APK" out/SC_Drive-v1.5.6-CI-placeholder-font.apk
+          sha256sum out/SC_Drive-v1.5.6-CI-placeholder-font.apk >out/SC_Drive-v1.5.6-CI-placeholder-font.apk.sha256
+          tar -czf out/SC_Drive-v1.5.6-CI-Source.tar.gz -C scdrive-app .
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          cp "$BT/apksigner" out/tools/apksigner
+          cp "$BT/zipalign" out/tools/zipalign
+          chmod +x out/tools/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.5.6-CANDIDATE-AND-TOOLS
+          path: out/*
+          if-no-files-found: error
+          retention-days: 14
