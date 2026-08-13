@@ -114,6 +114,21 @@ jobs:
           grep -n 'singleTask' scdrive-app/android/app/src/main/AndroidManifest.xml
           grep -n '_connectionRefreshDebounce = Timer' scdrive-app/lib/services/car_integration_service.dart
 
+      - name: Apply v1.5.4 Visual Master clean patch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          base64 -d build-assets/scdrive-v154-clean.patch.gz.b64 > /tmp/scdrive-v154-clean.patch.gz
+          echo '5d279829f1f933ea943938bbeee1e252ead25aa7508f6093b12436459a2d1e37  /tmp/scdrive-v154-clean.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/scdrive-v154-clean.patch.gz > /tmp/scdrive-v154-clean.patch
+          echo '10e948da58e73d898015ca380aa98a771d9e00bcdb177f489b56b0669da3c8ac  /tmp/scdrive-v154-clean.patch' | sha256sum -c -
+          cd scdrive-app
+          patch -p1 --forward --batch < /tmp/scdrive-v154-clean.patch
+          grep -n '^version: 1.5.4+11' pubspec.yaml
+          grep -n 'LIVE MAP' lib/features/head_unit/drive_deck_panel.dart
+          ! grep -q 'class _SmoothRollingNumber' lib/features/head_unit/head_unit_screen.dart
+          ! grep -q 'class _DriveInfoPanel' lib/features/head_unit/head_unit_screen.dart
+
       - name: Get dependencies
         working-directory: scdrive-app
         run: flutter pub get
@@ -210,9 +225,9 @@ jobs:
           p.write_text(s.replace(old,new))
           PY
 
-      - name: Analyze
+      - name: Strict analyze
         working-directory: scdrive-app
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+        run: flutter analyze
 
       - name: Build release APK
         id: apk_build
@@ -234,7 +249,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SC-Drive-v1.5.2-build-log
+          name: SC-Drive-v1.5.4-build-log
           path: build.log
           if-no-files-found: error
           retention-days: 14
@@ -248,12 +263,12 @@ jobs:
           test -s scdrive-app/build/app/outputs/flutter-apk/app-release.apk
           unzip -t scdrive-app/build/app/outputs/flutter-apk/app-release.apk >/dev/null
           mkdir -p out
-          cp scdrive-app/build/app/outputs/flutter-apk/app-release.apk out/SC_Drive-v1.5.2-hardened-headunit.apk
-          sha256sum out/SC_Drive-v1.5.2-hardened-headunit.apk | tee out/SC_Drive-v1.5.2-hardened-headunit.apk.sha256
+          cp scdrive-app/build/app/outputs/flutter-apk/app-release.apk out/SC_Drive-v1.5.4-visual-master-clean-headunit.apk
+          sha256sum out/SC_Drive-v1.5.4-visual-master-clean-headunit.apk | tee out/SC_Drive-v1.5.4-visual-master-clean-headunit.apk.sha256
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SC-Drive-v1.5.2-Hardened-APK
+          name: SC-Drive-v1.5.4-Visual-Master-Clean-APK
           path: out/*
           if-no-files-found: error
           retention-days: 14
