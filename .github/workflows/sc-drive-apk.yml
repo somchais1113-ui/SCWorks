@@ -118,7 +118,7 @@ jobs:
           echo '3bfea3d5be9cbeb77f4c3c48a0fe629e05510a8508872c101ae60829eff8b88e  /tmp/scdrive-v150.patch.gz' | sha256sum -c -
           gzip -dc /tmp/scdrive-v150.patch.gz > /tmp/scdrive-v150.patch
           echo 'dd4510fc503d79e4b039c8f160edf7a3c44c167dc4b341354ba760875093b420  /tmp/scdrive-v150.patch' | sha256sum -c -
-          patch -p1 --forward --batch < /tmp/scdrive-v150.patch
+          (cd scdrive-app && patch -p1 --forward --batch < /tmp/scdrive-v150.patch)
           grep -n '^version: 1.5.0+7' scdrive-app/pubspec.yaml
           grep -n 'google_maps_flutter: 2.13.1' scdrive-app/pubspec.yaml
           grep -n 'class DriveDeckPanel' scdrive-app/lib/features/head_unit/drive_deck_panel.dart
