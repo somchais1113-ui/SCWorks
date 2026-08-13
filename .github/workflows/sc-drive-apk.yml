@@ -81,15 +81,31 @@ jobs:
           set -euxo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('scdrive-app/android/settings.gradle.kts')
-          s = p.read_text()
+
+          settings = Path('scdrive-app/android/settings.gradle.kts')
+          s = settings.read_text()
           old = 'id("org.jetbrains.kotlin.android") version "2.1.0" apply false'
           new = 'id("org.jetbrains.kotlin.android") version "2.3.10" apply false'
           if old not in s:
               raise SystemExit('Expected Kotlin 2.1.0 plugin declaration not found')
-          p.write_text(s.replace(old, new))
+          settings.write_text(s.replace(old, new))
+
+          gradle = Path('scdrive-app/android/app/build.gradle.kts')
+          g = gradle.read_text()
+          if not g.startswith('import org.jetbrains.kotlin.gradle.dsl.JvmTarget'):
+              g = 'import org.jetbrains.kotlin.gradle.dsl.JvmTarget\n\n' + g
+          old_options = '''    kotlinOptions {\n        jvmTarget = JavaVersion.VERSION_11.toString()\n    }\n\n'''
+          if old_options not in g:
+              raise SystemExit('Expected legacy kotlinOptions block not found')
+          g = g.replace(old_options, '')
+          end_marker = '''}\n\nflutter {\n    source = "../.."\n}\n'''
+          replacement = '''}\n\nkotlin {\n    compilerOptions {\n        jvmTarget.set(JvmTarget.JVM_11)\n    }\n}\n\nflutter {\n    source = "../.."\n}\n'''
+          if end_marker not in g:
+              raise SystemExit('Expected Flutter Gradle end marker not found')
+          gradle.write_text(g.replace(end_marker, replacement))
           PY
           grep -n 'org.jetbrains.kotlin.android' scdrive-app/android/settings.gradle.kts
+          grep -n 'compilerOptions' scdrive-app/android/app/build.gradle.kts
 
       - name: Get dependencies
         working-directory: scdrive-app
