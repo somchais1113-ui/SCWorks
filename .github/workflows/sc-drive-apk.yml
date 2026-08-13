@@ -99,9 +99,20 @@ jobs:
           cfg=Path('scdrive-app/lib/app/app_config.dart'); c=cfg.read_text()
           c=c.replace('\n}\n','''\n  static const String buildProfile = String.fromEnvironment(\n    'SC_DRIVE_BUILD_PROFILE',\n    defaultValue: 'development',\n  );\n\n  static bool get isProductionBuild => buildProfile == 'production';\n\n}\n''',1)
           cfg.write_text(c)
+          car=Path('scdrive-app/lib/services/car_integration_service.dart'); cs=car.read_text()
+          if 'Timer? _connectionRefreshDebounce;' not in cs:
+              cs=cs.replace('  Timer? _musicSyncDebounce;\n','  Timer? _musicSyncDebounce;\n  Timer? _connectionRefreshDebounce;\n',1)
+          old_conn='''  void _handleConnectionChange(ConnectionStatusTypes status) {\n    connectionStatus.value = status;\n  }\n'''
+          new_conn='''  void _handleConnectionChange(ConnectionStatusTypes status) {\n    connectionStatus.value = status;\n\n    // A new Android Auto Session may be created while the headless engine is\n    // still alive. Re-send the root template after native runtime state has\n    // been cleared so reconnects never get stuck on the loading template.\n    if (status == ConnectionStatusTypes.connected) {\n      _connectionRefreshDebounce?.cancel();\n      _connectionRefreshDebounce = Timer(const Duration(milliseconds: 250), () {\n        unawaited(refreshVehicleDisplay());\n      });\n    }\n  }\n'''
+          if old_conn not in cs and '_connectionRefreshDebounce = Timer' not in cs:
+              raise SystemExit('connection handler marker missing')
+          cs=cs.replace(old_conn,new_conn,1)
+          cs=cs.replace('    _musicSyncDebounce?.cancel();\n    _spotifyService.removeListener', '    _musicSyncDebounce?.cancel();\n    _connectionRefreshDebounce?.cancel();\n    _spotifyService.removeListener',1)
+          car.write_text(cs)
           PY
           grep -n '^version: 1.5.2+9' scdrive-app/pubspec.yaml
           grep -n 'singleTask' scdrive-app/android/app/src/main/AndroidManifest.xml
+          grep -n '_connectionRefreshDebounce = Timer' scdrive-app/lib/services/car_integration_service.dart
 
       - name: Get dependencies
         working-directory: scdrive-app
