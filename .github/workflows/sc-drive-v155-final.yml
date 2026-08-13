@@ -1,0 +1,357 @@
+name: Build SC Drive v1.5.5 Final APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - '.github/workflows/sc-drive-v155-final.yml'
+      - 'build-assets/scdrive-v155-nissan-map.patch.gz.b64'
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter 3.35.7
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+
+      - name: Reconstruct verified base source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat build-assets/scdrive-src/{00,01,02,03,04,05,06,07}.b64 > /tmp/scdrive-src.b64
+          base64 -d /tmp/scdrive-src.b64 > /tmp/scdrive-src.tar.gz
+          echo '8c52e682bd9c76af7e11dfd153a04809c7a36d5edd79a1b58df52e3cec4aef6c  /tmp/scdrive-src.tar.gz' | sha256sum -c -
+          rm -rf /tmp/scdrive-unpack && mkdir -p /tmp/scdrive-unpack
+          tar -xzf /tmp/scdrive-src.tar.gz -C /tmp/scdrive-unpack
+          test -f /tmp/scdrive-unpack/scdrive_headunit_bundle/pubspec.yaml
+
+      - name: Generate Android scaffold
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf scdrive-app
+          flutter create --platforms=android --org com.scdeport --project-name sc_drive scdrive-app
+          SRC=/tmp/scdrive-unpack/scdrive_headunit_bundle
+          cp -a "$SRC/lib" scdrive-app/
+          cp "$SRC/analysis_options.yaml" scdrive-app/analysis_options.yaml
+          rm -rf scdrive-app/test scdrive-app/android/app/src/main/kotlin/com/scdeport/sc_drive
+          mkdir -p scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive scdrive-app/android/app/src/main/res/xml
+          cp "$SRC/android_overlay/MainActivity.kt" scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt
+          printf '%s\n' '<automotiveApp xmlns:android="http://schemas.android.com/apk/res/android"><uses name="template"/></automotiveApp>' > scdrive-app/android/app/src/main/res/xml/automotive_app_desc.xml
+
+      - name: Apply verified v1.5.0 overlay
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat build-assets/v150-overlay/{00,01,02}.b64 > /tmp/v150.b64
+          base64 -d /tmp/v150.b64 > /tmp/v150.tar.gz
+          echo '4bf7a4f0676aeb4ec63622ec3f657e2452e931284a756c2f77884fb73ad493f3  /tmp/v150.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/v150.tar.gz -C scdrive-app
+
+      - name: Apply v1.5.1 clock and v1.5.2 hardening baseline
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('scdrive-app/lib/features/head_unit/head_unit_screen.dart'); s=p.read_text()
+          s=s.replace('fontSize: compact ? 46 : 58,','fontSize: compact ? 53 : 67,',1); p.write_text(s)
+          p=Path('scdrive-app/pubspec.yaml'); s=p.read_text().replace('version: 1.5.0+7','version: 1.5.1+8',1); p.write_text(s)
+          settings=Path('scdrive-app/android/settings.gradle.kts'); s=settings.read_text()
+          s=s.replace('id("org.jetbrains.kotlin.android") version "2.1.0" apply false','id("org.jetbrains.kotlin.android") version "2.3.10" apply false'); settings.write_text(s)
+          gradle=Path('scdrive-app/android/app/build.gradle.kts'); g=gradle.read_text()
+          if not g.startswith('import org.jetbrains.kotlin.gradle.dsl.JvmTarget'):
+              g='import org.jetbrains.kotlin.gradle.dsl.JvmTarget\n\n'+g
+          g=g.replace('    kotlinOptions {\n        jvmTarget = JavaVersion.VERSION_11.toString()\n    }\n\n','')
+          g=g.replace(').all { !it.isNullOrBlank() }\n', ').all { !it.isNullOrBlank() }\nval allowTestSigning = System.getenv("SC_DRIVE_ALLOW_TEST_SIGNING") == "1"\n',1)
+          old='''            // Permanent signing is enabled when the four SC_DRIVE_* environment\n            // variables are present. CI/test builds fall back to the debug key.\n            signingConfig = if (hasReleaseSigning) {\n                signingConfigs.getByName("scDriveRelease")\n            } else {\n                signingConfigs.getByName("debug")\n            }\n'''
+          new='''            // Never silently debug-sign a normal release build. CI may opt in\n            // explicitly, then the artifact is re-signed with the permanent key.\n            signingConfig = when {\n                hasReleaseSigning -> signingConfigs.getByName("scDriveRelease")\n                allowTestSigning -> signingConfigs.getByName("debug")\n                else -> null\n            }\n'''
+          if old not in g: raise SystemExit('release signing block missing')
+          g=g.replace(old,new)
+          end='''}\n\nflutter {\n    source = "../.."\n}\n'''
+          if 'kotlin {\n    compilerOptions' not in g:
+              g=g.replace(end, '''}\n\nkotlin {\n    compilerOptions {\n        jvmTarget.set(JvmTarget.JVM_11)\n    }\n}\n\nflutter {\n    source = "../.."\n}\n''')
+          gradle.write_text(g)
+          manifest=Path('scdrive-app/android/app/src/main/AndroidManifest.xml'); m=manifest.read_text()
+          m=m.replace('android:allowBackup="false">','android:allowBackup="false"\n        android:usesCleartextTraffic="false"\n        android:enableOnBackInvokedCallback="true">')
+          m=m.replace('android:launchMode="singleTop"','android:launchMode="singleTask"\n            android:excludeFromRecents="true"')
+          manifest.write_text(m)
+          pub=Path('scdrive-app/pubspec.yaml'); p=pub.read_text().replace('version: 1.5.1+8','version: 1.5.2+9',1); pub.write_text(p)
+          cfg=Path('scdrive-app/lib/app/app_config.dart'); c=cfg.read_text()
+          c=c.replace('\n}\n','''\n  static const String buildProfile = String.fromEnvironment(\n    'SC_DRIVE_BUILD_PROFILE',\n    defaultValue: 'development',\n  );\n\n  static bool get isProductionBuild => buildProfile == 'production';\n\n}\n''',1)
+          cfg.write_text(c)
+          car=Path('scdrive-app/lib/services/car_integration_service.dart'); cs=car.read_text()
+          if 'Timer? _connectionRefreshDebounce;' not in cs:
+              cs=cs.replace('  Timer? _musicSyncDebounce;\n','  Timer? _musicSyncDebounce;\n  Timer? _connectionRefreshDebounce;\n',1)
+          old_conn='''  void _handleConnectionChange(ConnectionStatusTypes status) {\n    connectionStatus.value = status;\n  }\n'''
+          new_conn='''  void _handleConnectionChange(ConnectionStatusTypes status) {\n    connectionStatus.value = status;\n\n    if (status == ConnectionStatusTypes.connected) {\n      _connectionRefreshDebounce?.cancel();\n      _connectionRefreshDebounce = Timer(const Duration(milliseconds: 250), () {\n        unawaited(refreshVehicleDisplay());\n      });\n    }\n  }\n'''
+          if old_conn not in cs and '_connectionRefreshDebounce = Timer' not in cs:
+              raise SystemExit('connection handler marker missing')
+          cs=cs.replace(old_conn,new_conn,1)
+          cs=cs.replace('    _musicSyncDebounce?.cancel();\n    _spotifyService.removeListener', '    _musicSyncDebounce?.cancel();\n    _connectionRefreshDebounce?.cancel();\n    _spotifyService.removeListener',1)
+          car.write_text(cs)
+          PY
+
+      - name: Apply v1.5.4 Visual Master clean patch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          base64 -d build-assets/scdrive-v154-clean.patch.gz.b64 > /tmp/scdrive-v154-clean.patch.gz
+          echo '19e8acac02487cba288c2eec7d6d0fb3f7e9057a175a7593c6644954981f9c5a  /tmp/scdrive-v154-clean.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/scdrive-v154-clean.patch.gz > /tmp/scdrive-v154-clean.patch
+          echo '747f09dc469b3cb7cd591c77868c6a54014f6337fe40f5378088998e3a57b1cd  /tmp/scdrive-v154-clean.patch' | sha256sum -c -
+          cd scdrive-app
+          patch -p1 --forward --batch < /tmp/scdrive-v154-clean.patch
+          grep -n '^version: 1.5.4+11' pubspec.yaml
+
+      - name: Apply v1.5.5 Nissan font and Google Maps safely
+        shell: bash
+        run: |
+          set -euxo pipefail
+          base64 -d build-assets/scdrive-v155-nissan-map.patch.gz.b64 > /tmp/scdrive-v155.patch.gz
+          echo 'fe04b55cfedd3a7f6de5eedd6df2fdcc19ae607b5a06c94358fbbd7b63707e91  /tmp/scdrive-v155.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/scdrive-v155.patch.gz > /tmp/scdrive-v155.patch
+          echo 'c28e085ee5163d964bb6866470d452b7eb8d5b7498e26e9ffc89db62692bf36f  /tmp/scdrive-v155.patch' | sha256sum -c -
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          src=Path('/tmp/scdrive-v155.patch').read_text()
+          drop={'android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt','scripts/build_apk.sh'}
+          parts=re.split(r'(?=^diff --git )', src, flags=re.M)
+          kept=[]
+          for part in parts:
+              if not part.startswith('diff --git '):
+                  if part.strip(): kept.append(part)
+                  continue
+              m=re.match(r'diff --git a/(\S+) b/(\S+)', part)
+              if m and m.group(1) in drop: continue
+              kept.append(part)
+          Path('/tmp/scdrive-v155-ci.patch').write_text(''.join(kept))
+          PY
+          cd scdrive-app
+          mkdir -p assets/fonts scripts
+          patch -p1 --forward --batch < /tmp/scdrive-v155-ci.patch
+          cat > android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt <<'KT'
+          package com.scdeport.scdrive
+          import android.app.role.RoleManager
+          import android.content.Context
+          import android.content.Intent
+          import android.content.pm.PackageManager
+          import android.os.Build
+          import android.provider.Settings
+          import android.view.WindowManager
+          import io.flutter.embedding.android.FlutterActivity
+          import io.flutter.embedding.engine.FlutterEngine
+          import io.flutter.plugin.common.MethodChannel
+          class MainActivity : FlutterActivity() {
+              private val channels = listOf("com.scdeport.scdrive/headunit")
+              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+                  super.configureFlutterEngine(flutterEngine)
+                  channels.forEach { channelName ->
+                      MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName).setMethodCallHandler { call, result ->
+                          val method = call.method.lowercase()
+                          when {
+                              method == "isgooglemapsconfigured" -> result.success(isGoogleMapsConfigured())
+                              method.contains("home") && (method.contains("is") || method.contains("check")) -> result.success(isDefaultHome())
+                              method.contains("home") && (method.contains("request") || method.contains("set") || method.contains("role")) -> { requestHomeRole(); result.success(true) }
+                              method.contains("home") && method.contains("open") -> { openHomeSettings(); result.success(true) }
+                              method.contains("screen") && (method.contains("keep") || method.contains("wake")) -> { window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); result.success(true) }
+                              else -> result.notImplemented()
+                          }
+                      }
+                  }
+                  window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+              }
+              private fun isGoogleMapsConfigured(): Boolean = try {
+                  val appInfo = packageManager.getApplicationInfo(packageName, PackageManager.GET_META_DATA)
+                  val key = appInfo.metaData?.getString("com.google.android.geo.API_KEY")?.trim().orEmpty()
+                  key.isNotEmpty() && key != "SC_DRIVE_MAPS_DISABLED"
+              } catch (_: Exception) { false }
+              private fun isDefaultHome(): Boolean {
+                  val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+                  val resolved = packageManager.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY)
+                  return resolved?.activityInfo?.packageName == packageName
+              }
+              private fun requestHomeRole() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                      val roleManager = getSystemService(Context.ROLE_SERVICE) as RoleManager
+                      if (roleManager.isRoleAvailable(RoleManager.ROLE_HOME) && !roleManager.isRoleHeld(RoleManager.ROLE_HOME)) {
+                          startActivityForResult(roleManager.createRequestRoleIntent(RoleManager.ROLE_HOME), 9001); return
+                      }
+                  }
+                  openHomeSettings()
+              }
+              private fun openHomeSettings() {
+                  try { startActivity(Intent(Settings.ACTION_HOME_SETTINGS)) }
+                  catch (_: Exception) { startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)) }
+              }
+          }
+          KT
+          grep -n '^version: 1.5.5+12' pubspec.yaml
+          grep -n "fontFamily: 'NissanOpti'" lib/app/app.dart
+          grep -n 'MapType.normal' lib/features/head_unit/drive_deck_panel.dart
+          grep -n 'isGoogleMapsConfigured' lib/services/head_unit_platform_service.dart
+          grep -n 'isgooglemapsconfigured' android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt
+          REGULAR_FONT="$(fc-match -f '%{file}' 'DejaVu Sans' | head -1)"
+          ITALIC_FONT="$(fc-match -f '%{file}' 'DejaVu Sans:slant=italic' | head -1)"
+          cp "$REGULAR_FONT" assets/fonts/NissanOpti.otf
+          cp "$ITALIC_FONT" assets/fonts/NissanOpti-Italic.otf
+
+      - name: Get dependencies
+        working-directory: scdrive-app
+        run: flutter pub get
+
+      - name: Harden Android Auto plugin
+        shell: bash
+        run: |
+          set -euxo pipefail
+          PLUGIN_ROOT=$(python3 - <<'PY'
+          import json, pathlib, urllib.parse
+          cfg=json.load(open('scdrive-app/.dart_tool/package_config.json'))
+          pkg=next(x for x in cfg['packages'] if x['name']=='flutter_carplay')
+          uri=pkg['rootUri']; base=pathlib.Path('scdrive-app/.dart_tool/package_config.json').resolve().parent
+          path=pathlib.Path(urllib.parse.urlparse(uri).path) if uri.startswith('file:') else (base/pathlib.Path(uri)).resolve()
+          print(path)
+          PY
+          )
+          export PLUGIN_ROOT
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          root=Path(os.environ['PLUGIN_ROOT'])
+          p=root/'android/build.gradle'; s=p.read_text()
+          s=s.replace('ext.kotlin_version = "2.1.0"','ext.kotlin_version = "2.3.10"')
+          s=s.replace('    kotlinOptions {\n        jvmTarget = JavaVersion.VERSION_11\n    }\n\n','')
+          if not s.startswith('import org.jetbrains.kotlin.gradle.dsl.JvmTarget'):
+              s='import org.jetbrains.kotlin.gradle.dsl.JvmTarget\n\n'+s
+          if '\nkotlin {\n' not in s:
+              s+='''\n\nkotlin {\n    compilerOptions {\n        jvmTarget.set(JvmTarget.JVM_11)\n    }\n}\n'''
+          p.write_text(s)
+          p=root/'android/src/main/kotlin/com/oguzhnatly/flutter_android_auto/FlutterAndroidAutoPlugin.kt'; s=p.read_text()
+          if 'import kotlinx.coroutines.cancel' not in s:
+              s=s.replace('import kotlinx.coroutines.SupervisorJob\n','import kotlinx.coroutines.SupervisorJob\nimport kotlinx.coroutines.cancel\n')
+          marker='''        fun onAndroidAutoConnectionChange(status: FAAConnectionTypes) {\n            sendEvent(\n                type = FAAChannelTypes.onAndroidAutoConnectionChange.name,\n                data = mapOf("status" to status.name)\n            )\n        }\n'''
+          addition=marker+'''\n        fun resetRuntimeState(clearEventSink: Boolean = false) {\n            currentTemplate = null\n            currentScreen = null\n            currentAlertScreen = null\n            currentRootTemplateElementId = null\n            currentTabBarData = null\n            activeTabContentId = null\n            pendingTemplateElementId = null\n            templateDataByElementId.clear()\n            templateRuntimeTypes.clear()\n            templateBackButtons.clear()\n            templatesByElementId.clear()\n            screensByElementId.clear()\n            if (clearEventSink) events = null\n        }\n'''
+          if 'fun resetRuntimeState(' not in s:
+              if marker not in s: raise SystemExit('plugin marker missing')
+              s=s.replace(marker,addition)
+          old='''    override fun onCancel(arguments: Any?) {\n        events?.endOfStream()\n    }\n\n    override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {\n        channel.setMethodCallHandler(null)\n        eventChannel.setStreamHandler(null)\n    }\n'''
+          new='''    override fun onCancel(arguments: Any?) {\n        events?.endOfStream()\n        events = null\n    }\n\n    override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {\n        channel.setMethodCallHandler(null)\n        eventChannel.setStreamHandler(null)\n        resetRuntimeState(clearEventSink = true)\n        pluginScope.coroutineContext.cancel()\n    }\n'''
+          if old in s: s=s.replace(old,new)
+          p.write_text(s)
+          PY
+          cat > "$PLUGIN_ROOT/android/src/main/kotlin/com/oguzhnatly/flutter_android_auto/AndroidAutoService.kt" <<'KT'
+          package com.oguzhnatly.flutter_android_auto
+          import android.content.pm.ApplicationInfo
+          import androidx.car.app.CarAppService
+          import androidx.car.app.Session
+          import androidx.car.app.validation.HostValidator
+          import io.flutter.embedding.engine.FlutterEngine
+          import io.flutter.embedding.engine.FlutterEngineCache
+          import io.flutter.embedding.engine.dart.DartExecutor
+          class AndroidAutoService : CarAppService() {
+              companion object { var session: AndroidAutoSession? = null }
+              private var ownedFlutterEngine: FlutterEngine? = null
+              override fun onCreate() {
+                  super.onCreate(); val cache=FlutterEngineCache.getInstance(); val id=FAAConstants.flutterEngineId
+                  if (cache.get(id) != null) return
+                  val engine=FlutterEngine(this); engine.dartExecutor.executeDartEntrypoint(DartExecutor.DartEntrypoint.createDefault())
+                  cache.put(id, engine); ownedFlutterEngine=engine
+              }
+              override fun createHostValidator(): HostValidator {
+                  val debug=(applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+                  return if (debug) HostValidator.ALLOW_ALL_HOSTS_VALIDATOR else HostValidator.Builder(applicationContext).addAllowedHosts(androidx.car.app.R.array.hosts_allowlist_sample).build()
+              }
+              override fun onCreateSession(): Session = AndroidAutoSession().also { session=it }
+              override fun onDestroy() {
+                  session=null; FlutterAndroidAutoPlugin.resetRuntimeState(clearEventSink=true)
+                  ownedFlutterEngine?.let { engine -> val cache=FlutterEngineCache.getInstance(); if (cache.get(FAAConstants.flutterEngineId) === engine) cache.remove(FAAConstants.flutterEngineId); engine.destroy() }
+                  ownedFlutterEngine=null; super.onDestroy()
+              }
+          }
+          KT
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          p=Path(os.environ['PLUGIN_ROOT'])/'android/src/main/kotlin/com/oguzhnatly/flutter_android_auto/Session.kt'; s=p.read_text()
+          old='''            override fun onStop(owner: LifecycleOwner) {\n                FlutterAndroidAutoPlugin.onAndroidAutoConnectionChange(\n                    FAAConnectionTypes.disconnected\n                )\n                super.onStop(owner)\n            }\n'''
+          new=old+'''\n            override fun onDestroy(owner: LifecycleOwner) {\n                if (AndroidAutoService.session === this@AndroidAutoSession) AndroidAutoService.session = null\n                FlutterAndroidAutoPlugin.resetRuntimeState(clearEventSink = false)\n                super.onDestroy(owner)\n            }\n'''
+          if 'override fun onDestroy(owner: LifecycleOwner)' not in s:
+              if old not in s: raise SystemExit('session onStop missing')
+              s=s.replace(old,new)
+          p.write_text(s)
+          PY
+
+      - name: Strict analyze
+        working-directory: scdrive-app
+        shell: bash
+        run: |
+          set -o pipefail
+          flutter analyze 2>&1 | tee ../analyze.log
+
+      - name: Build release APK
+        id: apk_build
+        working-directory: scdrive-app
+        env:
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        shell: bash
+        run: |
+          set +e; set -o pipefail
+          flutter build apk --release \
+            --dart-define=SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID:-}" \
+            --dart-define=SC_DRIVE_BUILD_PROFILE=ci-test 2>&1 | tee ../build.log
+          STATUS=${PIPESTATUS[0]}; echo "status=$STATUS" >> "$GITHUB_OUTPUT"; exit 0
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.5.5-final-diagnostics
+          path: |
+            analyze.log
+            build.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Stop on build failure
+        if: steps.apk_build.outputs.status != '0'
+        run: exit 1
+
+      - name: Verify and package CI APK plus signing tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          mkdir -p out/tools
+          cp "$APK" out/SC_Drive-v1.5.5-CI-placeholder-font.apk
+          sha256sum out/SC_Drive-v1.5.5-CI-placeholder-font.apk > out/SC_Drive-v1.5.5-CI-placeholder-font.apk.sha256
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          cp "$BUILD_TOOLS/apksigner" out/tools/apksigner
+          cp "$BUILD_TOOLS/zipalign" out/tools/zipalign
+          chmod +x out/tools/apksigner out/tools/zipalign
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.5.5-CI-APK-AND-TOOLS
+          path: out/*
+          if-no-files-found: error
+          retention-days: 14
