@@ -1,0 +1,29 @@
+name: Package Android zipalign tools
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths: [ '.github/workflows/sc-drive-zipalign-tools.yml' ]
+
+jobs:
+  tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package latest build-tools zipalign runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          mkdir -p out/build-tools
+          cp "$BT/zipalign" out/build-tools/
+          if [ -d "$BT/lib64" ]; then cp -a "$BT/lib64" out/build-tools/; fi
+          if [ -d "$BT/lib" ]; then cp -a "$BT/lib" out/build-tools/; fi
+          ldd "$BT/zipalign" || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-zipalign-runtime
+          path: out/*
+          if-no-files-found: error
+          retention-days: 7
