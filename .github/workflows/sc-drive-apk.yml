@@ -26,7 +26,7 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Reconstruct verified SC Drive source
+      - name: Reconstruct verified base source
         shell: bash
         run: |
           set -euxo pipefail
@@ -41,7 +41,7 @@ jobs:
       - name: Flutter doctor
         run: flutter doctor -v
 
-      - name: Generate Android scaffold and apply compatibility fixes
+      - name: Generate Android scaffold
         shell: bash
         run: |
           set -euxo pipefail
@@ -49,48 +49,8 @@ jobs:
           flutter create --platforms=android --org com.scdeport --project-name sc_drive scdrive-app
           SRC=/tmp/scdrive-unpack/scdrive_headunit_bundle
           cp -a "$SRC/lib" scdrive-app/
-          cp "$SRC/pubspec.yaml" scdrive-app/pubspec.yaml
           cp "$SRC/analysis_options.yaml" scdrive-app/analysis_options.yaml
           rm -rf scdrive-app/test
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path('scdrive-app/pubspec.yaml')
-          s = p.read_text()
-          old = '  flutter_carplay:\n    path: ../packages/flutter_carplay\n'
-          if old not in s:
-              raise SystemExit('flutter_carplay path dependency pattern not found')
-          s = s.replace(old, '  flutter_carplay: ^1.6.4\n')
-          s = s.replace('geolocator: ^14.0.3', 'geolocator: 14.0.2')
-          p.write_text(s)
-
-          head = Path('scdrive-app/lib/features/head_unit/head_unit_screen.dart')
-          s = head.read_text()
-          if 'Icons.rainy' in s:
-              s = s.replace('Icons.rainy', 'Icons.water_drop_rounded')
-          head.write_text(s)
-
-          gps = Path('scdrive-app/lib/services/drive_telemetry_service.dart')
-          s = gps.read_text()
-          s = s.replace(
-              'final rawSpeedMps = math.max(0, position.speed);',
-              'final rawSpeedMps = math.max(0.0, position.speed).toDouble();',
-          )
-          gps.write_text(s)
-
-          g = Path('scdrive-app/android/app/build.gradle.kts')
-          s = g.read_text()
-          s = s.replace('com.scdeport.sc_drive', 'com.scdeport.scdrive')
-          marker = '        versionName = flutter.versionName\n'
-          if marker not in s:
-              raise SystemExit('defaultConfig marker not found')
-          s = s.replace(marker, marker + '        manifestPlaceholders["appAuthRedirectScheme"] = "scdrive-login"\n')
-          g.write_text(s)
-          PY
-
-          SRC=/tmp/scdrive-unpack/scdrive_headunit_bundle
-          cp "$SRC/android_overlay/AndroidManifest.xml" scdrive-app/android/app/src/main/AndroidManifest.xml
           rm -rf scdrive-app/android/app/src/main/kotlin/com/scdeport/sc_drive
           mkdir -p scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive
           cp "$SRC/android_overlay/MainActivity.kt" scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt
@@ -101,28 +61,19 @@ jobs:
           </automotiveApp>
           XML
 
-      - name: Apply v1.4.1 smooth cluster patch
+      - name: Apply verified v1.5.0 full overlay
         shell: bash
         run: |
           set -euxo pipefail
-          echo '862953f3847da94535df2b756b82f41827538677146c124fe7d338e54b946b2d  build-assets/scdrive-v141-simple.patch' | sha256sum -c -
-          patch -p1 --forward --batch < build-assets/scdrive-v141-simple.patch
-          grep -n '^version: 1.4.1+6' scdrive-app/pubspec.yaml
-
-      - name: Apply v1.5.0 Nissan map deck patch
-        shell: bash
-        run: |
-          set -euxo pipefail
-          cat build-assets/v150-map/{00,01}.b64 > /tmp/scdrive-v150.patch.gz.b64
-          base64 -d /tmp/scdrive-v150.patch.gz.b64 > /tmp/scdrive-v150.patch.gz
-          echo '3bfea3d5be9cbeb77f4c3c48a0fe629e05510a8508872c101ae60829eff8b88e  /tmp/scdrive-v150.patch.gz' | sha256sum -c -
-          gzip -dc /tmp/scdrive-v150.patch.gz > /tmp/scdrive-v150.patch
-          echo 'dd4510fc503d79e4b039c8f160edf7a3c44c167dc4b341354ba760875093b420  /tmp/scdrive-v150.patch' | sha256sum -c -
-          (cd scdrive-app && patch -p1 --forward --batch < /tmp/scdrive-v150.patch)
+          cat build-assets/v150-overlay/{00,01,02}.b64 > /tmp/scdrive-v150-overlay.b64
+          base64 -d /tmp/scdrive-v150-overlay.b64 > /tmp/scdrive-v150-overlay.tar.gz
+          echo '4bf7a4f0676aeb4ec63622ec3f657e2452e931284a756c2f77884fb73ad493f3  /tmp/scdrive-v150-overlay.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/scdrive-v150-overlay.tar.gz -C scdrive-app
           grep -n '^version: 1.5.0+7' scdrive-app/pubspec.yaml
           grep -n 'google_maps_flutter: 2.13.1' scdrive-app/pubspec.yaml
           grep -n 'class DriveDeckPanel' scdrive-app/lib/features/head_unit/drive_deck_panel.dart
           grep -n 'com.google.android.geo.API_KEY' scdrive-app/android/app/src/main/AndroidManifest.xml
+          grep -n 'SC_DRIVE_KEYSTORE_PATH' scdrive-app/android/app/build.gradle.kts
 
       - name: Get dependencies
         working-directory: scdrive-app
