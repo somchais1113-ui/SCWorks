@@ -1,0 +1,272 @@
+name: Build SC Drive v1.6.0 Speed Engine
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - '.github/workflows/sc-drive-v160-speed-engine.yml'
+      - 'build-assets/v160-overlay/**'
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: '17' }
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: '3.35.7', channel: stable, cache: true }
+
+      - name: Reconstruct verified v1.5.6 baseline
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); s=y["jobs"]["android"]["steps"].find{|x|x["name"]=="Reconstruct v1.5.6"}; abort("v1.5.6 reconstruct step missing") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v156-build2.yml >/tmp/reconstruct-v156.sh
+          bash /tmp/reconstruct-v156.sh
+          grep -n '^version: 1.5.6+13' scdrive-app/pubspec.yaml
+
+      - name: Apply native GNSS IMU VehicleSpeedEngine
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cp build-assets/v160-overlay/lib/services/drive_telemetry_service.dart scdrive-app/lib/services/drive_telemetry_service.dart
+          mkdir -p scdrive-app/lib/widgets
+          cp build-assets/v160-overlay/lib/widgets/speed_debug_overlay.dart scdrive-app/lib/widgets/speed_debug_overlay.dart
+          cp build-assets/v160-overlay/android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt
+          mkdir -p scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/speed
+          cp build-assets/v160-overlay/android/app/src/main/kotlin/com/scdeport/scdrive/speed/*.kt scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/speed/
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path('scdrive-app/pubspec.yaml')
+          s=p.read_text().replace('version: 1.5.6+13','version: 1.6.0+14')
+          p.write_text(s)
+
+          p=Path('scdrive-app/android/app/build.gradle.kts')
+          s=p.read_text()
+          if 'implementation("com.google.android.gms:play-services-location:21.4.0")' not in s:
+              s += '\n\ndependencies {\n    implementation("com.google.android.gms:play-services-location:21.4.0")\n}\n'
+          p.write_text(s)
+
+          p=Path('scdrive-app/lib/features/head_unit/head_unit_screen.dart')
+          s=p.read_text()
+          s=s.replace("import 'package:flutter/scheduler.dart';\n", '')
+          if "import '../../widgets/speed_debug_overlay.dart';" not in s:
+              s=s.replace("import '../../services/weather_service.dart';\n", "import '../../services/weather_service.dart';\nimport '../../widgets/speed_debug_overlay.dart';\n")
+          s=s.replace('  bool _isDefaultHome = false;\n','  bool _isDefaultHome = false;\n  bool _showSpeedDebug = false;\n',1)
+          toggle="""\n  void _toggleSpeedDebug() {\n    final next = !_showSpeedDebug;\n    setState(() => _showSpeedDebug = next);\n    unawaited(widget.telemetry.setSpeedDebugEnabled(next));\n  }\n\n"""
+          s=s.replace('  void _showWeatherDetails(BuildContext context) {\n', toggle+'  void _showWeatherDetails(BuildContext context) {\n',1)
+          old_host="""                            Expanded(\n                              flex: 49,\n                              child: _InstrumentPanel(\n                                telemetry: widget.telemetry,\n                                compact: compact,\n                              ),\n                            ),"""
+          new_host="""                            Expanded(\n                              flex: 49,\n                              child: GestureDetector(\n                                behavior: HitTestBehavior.opaque,\n                                onLongPress: _toggleSpeedDebug,\n                                child: Stack(\n                                  children: <Widget>[\n                                    Positioned.fill(\n                                      child: _InstrumentPanel(\n                                        telemetry: widget.telemetry,\n                                        compact: compact,\n                                      ),\n                                    ),\n                                    if (_showSpeedDebug)\n                                      Positioned(\n                                        left: compact ? 8 : 12,\n                                        top: compact ? 8 : 12,\n                                        child: SpeedDebugOverlay(\n                                          telemetry: widget.telemetry,\n                                        ),\n                                      ),\n                                  ],\n                                ),\n                              ),\n                            ),"""
+          if old_host not in s: raise SystemExit('instrument host baseline mismatch')
+          s=s.replace(old_host,new_host,1)
+          start=s.index('class _InstrumentPanel extends StatefulWidget')
+          end=s.index('class _InstrumentMetric extends StatelessWidget')
+          block=r'''class _InstrumentPanel extends StatefulWidget {
+            const _InstrumentPanel({required this.telemetry, required this.compact});
+
+            final DriveTelemetryService telemetry;
+            final bool compact;
+
+            @override
+            State<_InstrumentPanel> createState() => _InstrumentPanelState();
+          }
+
+          class _InstrumentPanelState extends State<_InstrumentPanel> {
+            int _digitalSpeed = 0;
+            bool _hadFreshFix = false;
+
+            void _updateDigitalSpeed(double target, bool locked) {
+              if (!locked) {
+                _digitalSpeed = 0;
+                _hadFreshFix = false;
+                return;
+              }
+              if (!_hadFreshFix) {
+                _digitalSpeed = target.round().clamp(0, 240);
+                _hadFreshFix = true;
+                return;
+              }
+              while (target >= _digitalSpeed + 0.58 && _digitalSpeed < 240) {
+                _digitalSpeed++;
+              }
+              while (target <= _digitalSpeed - 0.58 && _digitalSpeed > 0) {
+                _digitalSpeed--;
+              }
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              final gpsLocked = widget.telemetry.hasFreshLocationFix;
+              final speed = widget.telemetry.displaySpeedKph.clamp(0, 240).toDouble();
+              final rpm = widget.telemetry.estimatedRpm.clamp(0, 6000).toDouble();
+              final cvt = widget.telemetry.estimatedCvtRatio;
+              _updateDigitalSpeed(speed, gpsLocked);
+
+              return Container(
+                color: Colors.transparent,
+                child: Stack(
+                  children: <Widget>[
+                    Positioned.fill(
+                      child: CustomPaint(
+                        painter: _GaugeBackgroundPainter(
+                          speedFraction: speed / 240,
+                          rpmFraction: rpm / 6000,
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: EdgeInsets.all(widget.compact ? 20 : 30),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          const SizedBox(height: 2),
+                          const Spacer(),
+                          Center(
+                            child: Column(
+                              children: <Widget>[
+                                SizedBox(
+                                  width: widget.compact ? 285 : 365,
+                                  height: widget.compact ? 96 : 128,
+                                  child: FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.center,
+                                    child: Text(
+                                      gpsLocked ? _digitalSpeed.toString() : '--',
+                                      maxLines: 1,
+                                      softWrap: false,
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: widget.compact ? 112 : 150,
+                                        height: 0.82,
+                                        fontWeight: FontWeight.w300,
+                                        letterSpacing: -3.2,
+                                        fontFeatures: const <ui.FontFeature>[
+                                          ui.FontFeature.tabularFigures(),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  'km/h',
+                                  style: TextStyle(
+                                    color: const Color(0xFFAAB0B8),
+                                    fontSize: widget.compact ? 20 : 26,
+                                    fontWeight: FontWeight.w400,
+                                  ),
+                                ),
+                                SizedBox(height: widget.compact ? 8 : 12),
+                                Container(
+                                  width: widget.compact ? 160 : 220,
+                                  height: 1,
+                                  color: const Color(0xFF46505A),
+                                ),
+                                SizedBox(height: widget.compact ? 8 : 10),
+                                Text(
+                                  gpsLocked ? 'GPS SPEED' : widget.telemetry.gpsStatusLabel,
+                                  style: TextStyle(
+                                    color: gpsLocked
+                                        ? const Color(0xFF39BFF0)
+                                        : const Color(0xFFE5A35B),
+                                    fontSize: widget.compact ? 11 : 14,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Spacer(),
+                          Row(
+                            children: <Widget>[
+                              Expanded(
+                                child: _InstrumentMetric(
+                                  label: 'EST. ENGINE RPM',
+                                  value: gpsLocked ? rpm.round().toString() : '--',
+                                  suffix: 'rpm',
+                                  warning: true,
+                                ),
+                              ),
+                              Container(
+                                width: 1,
+                                height: widget.compact ? 54 : 68,
+                                color: const Color(0xFF26303B),
+                              ),
+                              Expanded(
+                                child: _InstrumentMetric(
+                                  label: 'EST. CVT RATIO',
+                                  value: gpsLocked ? cvt.toStringAsFixed(2) : '--',
+                                  suffix: ':1',
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: widget.compact ? 4 : 8),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+          }
+
+          '''
+          # Dedent the embedded block that is indented only for workflow readability.
+          import textwrap
+          block=textwrap.dedent(block)
+          s=s[:start]+block+s[end:]
+          p.write_text(s)
+          PY
+
+          grep -n '^version: 1.6.0+14' scdrive-app/pubspec.yaml
+          grep -n 'play-services-location:21.4.0' scdrive-app/android/app/build.gradle.kts
+          grep -n 'class VehicleSpeedEngine' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleSpeedEngine.kt
+          grep -n 'fontWeight: FontWeight.w300' scdrive-app/lib/features/head_unit/head_unit_screen.dart | head
+          grep -n 'SpeedDebugOverlay' scdrive-app/lib/features/head_unit/head_unit_screen.dart
+
+      - name: Resolve dependencies
+        working-directory: scdrive-app
+        run: flutter pub get
+
+      - name: Strict analyze
+        working-directory: scdrive-app
+        run: flutter analyze
+
+      - name: Build release APK
+        working-directory: scdrive-app
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: |
+          flutter build apk --release \
+            --dart-define=SPOTIFY_CLIENT_ID=c5d101a6669743f6ac6663b5a9c7d35a \
+            --dart-define=SC_DRIVE_BUILD_PROFILE=production
+
+      - name: Verify and package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          mkdir -p out/tools
+          cp "$APK" out/SC_Drive-v1.6.0-CI-placeholder-font.apk
+          sha256sum out/SC_Drive-v1.6.0-CI-placeholder-font.apk >out/SC_Drive-v1.6.0-CI-placeholder-font.apk.sha256
+          tar -czf out/SC_Drive-v1.6.0-CI-Source.tar.gz -C scdrive-app .
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          cp "$BT/apksigner" out/tools/apksigner
+          cp "$BT/zipalign" out/tools/zipalign
+          chmod +x out/tools/*
+          "$BT/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.6.0-SPEED-ENGINE-CANDIDATE
+          path: out/*
+          if-no-files-found: error
+          retention-days: 14
