@@ -1,0 +1,81 @@
+name: Build SC Drive v1.6.0 Thin Speed Numerals
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths: [ '.github/workflows/sc-drive-v160-speed-engine4.yml' ]
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: '17' }
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: '3.35.7', channel: stable, cache: true }
+
+      - name: Reconstruct verified v1.6.0 speed engine
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); s=y["jobs"]["android"]["steps"].find{|x|x["name"]=="Reconstruct clean v1.6.0 source"}; abort("reconstruct step missing") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v160-speed-engine3.yml >/tmp/v160-reconstruct.sh
+          bash /tmp/v160-reconstruct.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('scdrive-app/lib/features/head_unit/head_unit_screen.dart')
+          s=p.read_text()
+          marker='fontSize: widget.compact ? 112 : 150,'
+          pos=s.find(marker)
+          if pos < 0: raise SystemExit('speed font marker missing')
+          nearby=s[max(0,pos-150):pos+150]
+          if "fontFamily: 'sans-serif-light'" not in nearby:
+              s=s[:pos]+"fontFamily: 'sans-serif-light',\n                              "+s[pos:]
+          p.write_text(s)
+          PY
+          grep -n '^version: 1.6.0+14' scdrive-app/pubspec.yaml
+          grep -n "fontFamily: 'sans-serif-light'" scdrive-app/lib/features/head_unit/head_unit_screen.dart
+
+      - name: Resolve dependencies
+        working-directory: scdrive-app
+        run: flutter pub get
+
+      - name: Strict analyze
+        working-directory: scdrive-app
+        run: flutter analyze
+
+      - name: Build release APK
+        working-directory: scdrive-app
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: |
+          flutter build apk --release \
+            --dart-define=SPOTIFY_CLIENT_ID=c5d101a6669743f6ac6663b5a9c7d35a \
+            --dart-define=SC_DRIVE_BUILD_PROFILE=production
+
+      - name: Verify and package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          mkdir -p out/tools
+          cp "$APK" out/SC_Drive-v1.6.0-thin-speed-CI-placeholder-font.apk
+          sha256sum out/SC_Drive-v1.6.0-thin-speed-CI-placeholder-font.apk >out/SC_Drive-v1.6.0-thin-speed-CI-placeholder-font.apk.sha256
+          tar -czf out/SC_Drive-v1.6.0-thin-speed-CI-Source.tar.gz -C scdrive-app .
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          cp "$BT/apksigner" out/tools/apksigner
+          cp "$BT/zipalign" out/tools/zipalign
+          chmod +x out/tools/*
+          "$BT/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.6.0-THIN-SPEED-RELEASE-CANDIDATE
+          path: out/*
+          if-no-files-found: error
+          retention-days: 14
