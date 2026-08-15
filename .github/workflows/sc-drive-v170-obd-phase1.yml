@@ -64,38 +64,45 @@ jobs:
           cd scdrive-app
           patch -p1 --batch --forward </tmp/v170.patch
 
-          # Hardware Gate requirement: the copyable probe must contain the
-          # actual raw ATZ response, not merely perform ATZ invisibly during
-          # connection initialization. ATZ resets the ELM, so restore the
-          # conservative ELM setup before continuing the probe.
+          # Hardware Gate requirement: include the raw ATZ response in the
+          # copyable probe report. ATZ resets the adapter, so restore the
+          # conservative ELM setup before protocol/PID probing continues.
           python3 - <<'PY'
           from pathlib import Path
+
           manager = Path('android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdManager.kt')
           s = manager.read_text()
-          old = '''                val entries = mutableListOf<ObdDiagnostics.ProbeEntry>()
-                val commands = mutableListOf("ATI", "ATDP", "ATDPN", "0100")'''
-          new = '''                val entries = mutableListOf<ObdDiagnostics.ProbeEntry>()
+          probe_start = s.index('fun runHardwareProbe')
 
-                val atz = executeCommand("ATZ", 4500, countPerformance = false)
-                entries += ObdDiagnostics.ProbeEntry("ATZ", atz.rawResponse, atz.latencyMs)
-                for (setupCommand in listOf("ATE0", "ATL0", "ATS0", "ATH0", "ATAT1", "ATSP0")) {
-                    val setupResult = executeCommand(setupCommand, 2500, countPerformance = false)
-                    if (ElmResponseParser.isUnsupported(setupResult.rawResponse)) continue
-                }
+          entry_token = 'val entries = mutableListOf<ObdDiagnostics.ProbeEntry>()'
+          entry_pos = s.index(entry_token, probe_start)
+          line_start = s.rfind('\n', 0, entry_pos) + 1
+          indent = s[line_start:entry_pos]
+          insert_pos = entry_pos + len(entry_token)
+          atz_block = (
+              '\n\n' + indent + 'val atz = executeCommand("ATZ", 4500, countPerformance = false)'
+              + '\n' + indent + 'entries += ObdDiagnostics.ProbeEntry("ATZ", atz.rawResponse, atz.latencyMs)'
+              + '\n' + indent + 'for (setupCommand in listOf("ATE0", "ATL0", "ATS0", "ATH0", "ATAT1", "ATSP0")) {'
+              + '\n' + indent + '    val setupResult = executeCommand(setupCommand, 2500, countPerformance = false)'
+              + '\n' + indent + '    if (ElmResponseParser.isUnsupported(setupResult.rawResponse)) continue'
+              + '\n' + indent + '}'
+          )
+          s = s[:insert_pos] + atz_block + s[insert_pos:]
 
-                val commands = mutableListOf("ATI", "0100", "ATDP", "ATDPN")'''
-          assert old in s, 'Hardware Probe anchor not found'
-          manager.write_text(s.replace(old, new, 1))
+          old_commands = 'val commands = mutableListOf("ATI", "ATDP", "ATDPN", "0100")'
+          command_pos = s.index(old_commands, probe_start)
+          s = s[:command_pos] + 'val commands = mutableListOf("ATI", "0100", "ATDP", "ATDPN")' + s[command_pos + len(old_commands):]
+          manager.write_text(s)
 
           diagnostics = Path('android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdDiagnostics.kt')
           d = diagnostics.read_text()
-          old_d = '''            appendLine("Connection State: ${state.connectionState.name}")
-            appendLine("ATI: ${entry("ATI")}")'''
-          new_d = '''            appendLine("Connection State: ${state.connectionState.name}")
-            appendLine("ATZ: ${entry("ATZ")}")
-            appendLine("ATI: ${entry("ATI")}")'''
-          assert old_d in d, 'Diagnostic report anchor not found'
-          diagnostics.write_text(d.replace(old_d, new_d, 1))
+          diag_token = 'appendLine("Connection State: ${state.connectionState.name}")'
+          diag_pos = d.index(diag_token)
+          diag_line_start = d.rfind('\n', 0, diag_pos) + 1
+          diag_indent = d[diag_line_start:diag_pos]
+          diag_insert = diag_pos + len(diag_token)
+          d = d[:diag_insert] + '\n' + diag_indent + 'appendLine("ATZ: ${entry("ATZ")}")' + d[diag_insert:]
+          diagnostics.write_text(d)
           PY
 
           dart format lib >/dev/null
