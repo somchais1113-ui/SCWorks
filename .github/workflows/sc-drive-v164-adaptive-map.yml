@@ -5,7 +5,7 @@ on:
     branches: [ sc-drive-apk-build ]
     paths:
       - '.github/workflows/sc-drive-v164-adaptive-map.yml'
-      - 'build-assets/v164-adaptive-map/**'
+      - 'build-assets/v164-adaptive-map-v2/**'
   workflow_dispatch:
 
 jobs:
@@ -43,7 +43,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          cat build-assets/v164-adaptive-map/{00,01}.b64 >/tmp/v164.b64
+          cat build-assets/v164-adaptive-map-v2/{00,01,02}.b64 >/tmp/v164.b64
           echo '9e157864889f603ea42e0af0efa34f03c8c2172c7b6cb22199a46f70acec405d  /tmp/v164.b64' | sha256sum -c -
           base64 -d /tmp/v164.b64 >/tmp/v164.patch.gz
           echo '18564e9a7b8ca1ac9bd61319d4a7aab18996b3d8b67f0e717aea60dc6bacf6e3  /tmp/v164.patch.gz' | sha256sum -c -
