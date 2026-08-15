@@ -63,11 +63,48 @@ jobs:
           echo 'b279d7c7d11523ca29ffcf654384ec4d4ed927be015e25e80cc797585d4edb42  /tmp/v170.patch' | sha256sum -c -
           cd scdrive-app
           patch -p1 --batch --forward </tmp/v170.patch
+
+          # Hardware Gate requirement: the copyable probe must contain the
+          # actual raw ATZ response, not merely perform ATZ invisibly during
+          # connection initialization. ATZ resets the ELM, so restore the
+          # conservative ELM setup before continuing the probe.
+          python3 - <<'PY'
+          from pathlib import Path
+          manager = Path('android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdManager.kt')
+          s = manager.read_text()
+          old = '''                val entries = mutableListOf<ObdDiagnostics.ProbeEntry>()
+                val commands = mutableListOf("ATI", "ATDP", "ATDPN", "0100")'''
+          new = '''                val entries = mutableListOf<ObdDiagnostics.ProbeEntry>()
+
+                val atz = executeCommand("ATZ", 4500, countPerformance = false)
+                entries += ObdDiagnostics.ProbeEntry("ATZ", atz.rawResponse, atz.latencyMs)
+                for (setupCommand in listOf("ATE0", "ATL0", "ATS0", "ATH0", "ATAT1", "ATSP0")) {
+                    val setupResult = executeCommand(setupCommand, 2500, countPerformance = false)
+                    if (ElmResponseParser.isUnsupported(setupResult.rawResponse)) continue
+                }
+
+                val commands = mutableListOf("ATI", "0100", "ATDP", "ATDPN")'''
+          assert old in s, 'Hardware Probe anchor not found'
+          manager.write_text(s.replace(old, new, 1))
+
+          diagnostics = Path('android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdDiagnostics.kt')
+          d = diagnostics.read_text()
+          old_d = '''            appendLine("Connection State: ${state.connectionState.name}")
+            appendLine("ATI: ${entry("ATI")}")'''
+          new_d = '''            appendLine("Connection State: ${state.connectionState.name}")
+            appendLine("ATZ: ${entry("ATZ")}")
+            appendLine("ATI: ${entry("ATI")}")'''
+          assert old_d in d, 'Diagnostic report anchor not found'
+          diagnostics.write_text(d.replace(old_d, new_d, 1))
+          PY
+
           dart format lib >/dev/null
           grep -n '^version: 1.7.0+20' pubspec.yaml
           grep -R -n 'com.scdeport.scdrive/obd_state' android/app/src/main/kotlin lib
           grep -R -n '00001101-0000-1000-8000-00805F9B34FB' android/app/src/main/kotlin/com/scdeport/scdrive/obd
           grep -R -n 'runHardwareProbe' android/app/src/main/kotlin lib
+          grep -R -n 'ObdDiagnostics.ProbeEntry("ATZ"' android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdManager.kt
+          grep -R -n 'appendLine("ATZ:' android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdDiagnostics.kt
           grep -R -n 'BLUETOOTH_CONNECT' android/app/src/main/AndroidManifest.xml
           grep -R -n '010D' android/app/src/main/kotlin/com/scdeport/scdrive/obd
           grep -R -n '010C' android/app/src/main/kotlin/com/scdeport/scdrive/obd
@@ -110,6 +147,8 @@ jobs:
           grep -q 'class ObdManager' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdManager.kt
           grep -q 'class BluetoothClassicObdTransport' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/obd/BluetoothClassicObdTransport.kt
           grep -q 'class ElmCommandQueue' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/obd/ElmCommandQueue.kt
+          grep -q 'ObdDiagnostics.ProbeEntry("ATZ"' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdManager.kt
+          grep -q 'appendLine("ATZ:' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdDiagnostics.kt
           grep -q '010D' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdManager.kt
           grep -q '010C' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdManager.kt
 
@@ -134,6 +173,7 @@ jobs:
           - paired-device selection with MAC persistence
           - ELM327-compatible command queue and prompt-based response handling
           - initialization / protocol / PID capability probing
+          - Hardware Probe reports actual raw ATZ / ATI / ATDP / ATDPN / 0100 / 010C / 010D responses
           - standard PID 010D vehicle speed
           - standard PID 010C engine RPM
           - additional standard read-only telemetry where supported
