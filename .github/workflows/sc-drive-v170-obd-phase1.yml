@@ -45,7 +45,17 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          cat build-assets/v170-obd-phase1/{00,01,02,03}.b64 >/tmp/v170.b64
+          cat \
+            build-assets/v170-obd-phase1/00.b64 \
+            build-assets/v170-obd-phase1/01a.b64 \
+            build-assets/v170-obd-phase1/01b.b64 \
+            build-assets/v170-obd-phase1/01c.b64 \
+            build-assets/v170-obd-phase1/01d0.b64 \
+            build-assets/v170-obd-phase1/01d1.b64 \
+            build-assets/v170-obd-phase1/01d2.b64 \
+            build-assets/v170-obd-phase1/01d3.b64 \
+            build-assets/v170-obd-phase1/02.b64 \
+            build-assets/v170-obd-phase1/03.b64 > /tmp/v170.b64
           echo '30f0355bc523f9808b95992fae939fb1fdfb9d4ba2d0c09e3a8b3d401cc3a03a  /tmp/v170.b64' | sha256sum -c -
           base64 -d /tmp/v170.b64 >/tmp/v170.patch.gz
           echo '161a3b1b19df84d8a5315331a483aaf44199993ef02e57dc9bd35ebf3b052649  /tmp/v170.patch.gz' | sha256sum -c -
@@ -53,7 +63,7 @@ jobs:
           echo 'b279d7c7d11523ca29ffcf654384ec4d4ed927be015e25e80cc797585d4edb42  /tmp/v170.patch' | sha256sum -c -
           cd scdrive-app
           patch -p1 --batch --forward </tmp/v170.patch
-          dart format lib android/app/src/main/kotlin/com/scdeport/scdrive/obd >/dev/null || true
+          dart format lib >/dev/null
           grep -n '^version: 1.7.0+20' pubspec.yaml
           grep -R -n 'com.scdeport.scdrive/obd_state' android/app/src/main/kotlin lib
           grep -R -n '00001101-0000-1000-8000-00805F9B34FB' android/app/src/main/kotlin/com/scdeport/scdrive/obd
@@ -94,7 +104,6 @@ jobs:
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
           "$BT/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
 
-          # Static guardrails for the hardware-gate milestone.
           grep -q 'version: 1.7.0+20' scdrive-app/pubspec.yaml
           grep -q 'BLUETOOTH_CONNECT' scdrive-app/android/app/src/main/AndroidManifest.xml
           grep -q 'BLUETOOTH_SCAN' scdrive-app/android/app/src/main/AndroidManifest.xml
@@ -103,7 +112,6 @@ jobs:
           grep -q 'class ElmCommandQueue' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/obd/ElmCommandQueue.kt
           grep -q '010D' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdManager.kt
           grep -q '010C' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdManager.kt
-          grep -q 'Mode 04' scdrive-app/CHANGELOG_SC_DRIVE_v1.7.0.md || true
 
           mkdir -p out/tools/lib
           cp "$APK" out/SC_Drive-v1.7.0-OBD-Phase1-HardwareGate-CI-DUMMY-MAPS.apk
