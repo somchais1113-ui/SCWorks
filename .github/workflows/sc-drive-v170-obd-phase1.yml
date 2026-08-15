@@ -1,0 +1,150 @@
+name: Build SC Drive v1.7.0 OBD Phase 1
+
+on:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - '.github/workflows/sc-drive-v170-obd-phase1.yml'
+      - 'build-assets/v170-obd-phase1/**'
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+
+      - name: Reconstruct verified v1.6.5 base
+        shell: bash
+        run: |
+          set -euxo pipefail
+          run_v165_step() {
+            ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v165-auto-map-theme.yml "$1" >/tmp/v165-step.sh
+            bash /tmp/v165-step.sh
+          }
+          run_v165_step 'Reconstruct verified v1.6.4 base'
+          run_v165_step 'Apply automatic day night tunnel map'
+          cd scdrive-app
+          flutter pub get
+          dart fix --apply
+          grep -n '^version: 1.6.5+19' pubspec.yaml
+
+      - name: Apply OBD Phase 1 hardware-gate integration
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat build-assets/v170-obd-phase1/{00,01,02,03}.b64 >/tmp/v170.b64
+          echo '30f0355bc523f9808b95992fae939fb1fdfb9d4ba2d0c09e3a8b3d401cc3a03a  /tmp/v170.b64' | sha256sum -c -
+          base64 -d /tmp/v170.b64 >/tmp/v170.patch.gz
+          echo '161a3b1b19df84d8a5315331a483aaf44199993ef02e57dc9bd35ebf3b052649  /tmp/v170.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/v170.patch.gz >/tmp/v170.patch
+          echo 'b279d7c7d11523ca29ffcf654384ec4d4ed927be015e25e80cc797585d4edb42  /tmp/v170.patch' | sha256sum -c -
+          cd scdrive-app
+          patch -p1 --batch --forward </tmp/v170.patch
+          dart format lib android/app/src/main/kotlin/com/scdeport/scdrive/obd >/dev/null || true
+          grep -n '^version: 1.7.0+20' pubspec.yaml
+          grep -R -n 'com.scdeport.scdrive/obd_state' android/app/src/main/kotlin lib
+          grep -R -n '00001101-0000-1000-8000-00805F9B34FB' android/app/src/main/kotlin/com/scdeport/scdrive/obd
+          grep -R -n 'runHardwareProbe' android/app/src/main/kotlin lib
+          grep -R -n 'BLUETOOTH_CONNECT' android/app/src/main/AndroidManifest.xml
+          grep -R -n '010D' android/app/src/main/kotlin/com/scdeport/scdrive/obd
+          grep -R -n '010C' android/app/src/main/kotlin/com/scdeport/scdrive/obd
+          test -z "$(find . -name '*.rej' -print -quit)"
+
+      - name: Resolve dependencies
+        working-directory: scdrive-app
+        run: flutter pub get
+
+      - name: Apply safe Dart analyzer fixes
+        working-directory: scdrive-app
+        run: dart fix --apply
+
+      - name: Strict Flutter analyze
+        working-directory: scdrive-app
+        run: flutter analyze
+
+      - name: Build release candidate
+        working-directory: scdrive-app
+        env:
+          GOOGLE_MAPS_API_KEY: AIza00000000000000000000000000000000000
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: |
+          flutter build apk --release \
+            --dart-define=SC_DRIVE_BUILD_PROFILE=production
+
+      - name: Verify candidate and package source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
+
+          # Static guardrails for the hardware-gate milestone.
+          grep -q 'version: 1.7.0+20' scdrive-app/pubspec.yaml
+          grep -q 'BLUETOOTH_CONNECT' scdrive-app/android/app/src/main/AndroidManifest.xml
+          grep -q 'BLUETOOTH_SCAN' scdrive-app/android/app/src/main/AndroidManifest.xml
+          grep -q 'class ObdManager' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdManager.kt
+          grep -q 'class BluetoothClassicObdTransport' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/obd/BluetoothClassicObdTransport.kt
+          grep -q 'class ElmCommandQueue' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/obd/ElmCommandQueue.kt
+          grep -q '010D' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdManager.kt
+          grep -q '010C' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdManager.kt
+          grep -q 'Mode 04' scdrive-app/CHANGELOG_SC_DRIVE_v1.7.0.md || true
+
+          mkdir -p out/tools/lib
+          cp "$APK" out/SC_Drive-v1.7.0-OBD-Phase1-HardwareGate-CI-DUMMY-MAPS.apk
+          cp "$BT/apksigner" out/tools/apksigner
+          cp "$BT/zipalign" out/tools/zipalign
+          cp "$BT/lib/apksigner.jar" out/tools/lib/apksigner.jar
+          chmod +x out/tools/apksigner out/tools/zipalign
+          sha256sum "$APK" > out/candidate.sha256
+          tar --exclude=.dart_tool --exclude=build --exclude=.gradle -czf out/SC_Drive-v1.7.0-OBD-Phase1-Source.tar.gz -C scdrive-app .
+
+          cat > out/PHASE1_STATUS.txt <<'EOF'
+          SC Drive v1.7.0+20 — OBD-II Phase 1 Hardware Gate
+
+          BUILD STATUS: COMPILED / STATICALLY VERIFIED
+          PHYSICAL OBD STATUS: NOT YET VERIFIED ON THE USER'S VEHICLE
+
+          Implemented in this milestone:
+          - Android Bluetooth Classic RFCOMM/SPP transport
+          - Android 12+ Bluetooth permission handling
+          - paired-device selection with MAC persistence
+          - ELM327-compatible command queue and prompt-based response handling
+          - initialization / protocol / PID capability probing
+          - standard PID 010D vehicle speed
+          - standard PID 010C engine RPM
+          - additional standard read-only telemetry where supported
+          - measured runtime OBD rate / speed rate / latency / age / confidence
+          - reconnect state machine and watchdog
+          - Flutter OBD setup, diagnostics and hardware-probe report
+          - OBD debug overlay and OBD CSV logging
+
+          Deliberately NOT activated yet:
+          - OBD speed fusion into the authoritative VehicleSpeedState
+
+          Reason:
+          The master brief requires real physical verification of ATZ/ATI/ATDP/ATDPN/0100/010C/010D and measured latency/rate before advanced OBD/GPS/IMU fusion is enabled.
+          Existing GNSS + IMU speed remains authoritative in this Phase 1 APK.
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.7.0-OBD-Phase1-HARDWARE-GATE
+          path: out/**
+          if-no-files-found: error
+          retention-days: 7
