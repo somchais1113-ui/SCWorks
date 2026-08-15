@@ -5,7 +5,7 @@ on:
     branches: [ sc-drive-apk-build ]
     paths:
       - '.github/workflows/sc-drive-v163-build.yml'
-      - 'build-assets/v163-patch/**'
+      - 'build-assets/v163-patch-v2/**'
   workflow_dispatch:
 
 jobs:
@@ -40,7 +40,11 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          cat build-assets/v163-patch/{00,01,02,03,04,05}.b64 | base64 -d | gzip -dc >/tmp/v163.patch.raw
+          cat build-assets/v163-patch-v2/{00,01,02,03,04,05,06,07,08,09,10}.b64 >/tmp/v163.b64
+          echo '1115b9268b4ebc76390d29996991a75ef1f5e1cc3407771f5ba61c1e206db3f9  /tmp/v163.b64' | sha256sum -c -
+          base64 -d /tmp/v163.b64 >/tmp/v163.patch.gz
+          echo '59340a8cfb94d46bdb373139366e21d7bbfd109102a01caa0f8c5a4228790e8b  /tmp/v163.patch.gz' | sha256sum -c -
+          gzip -dc /tmp/v163.patch.gz >/tmp/v163.patch.raw
           python3 - <<'PY'
           from pathlib import Path
           text=Path('/tmp/v163.patch.raw').read_text()
