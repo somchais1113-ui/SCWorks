@@ -1,0 +1,31 @@
+name: Export SC Drive Android Build Tools
+
+on:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths: [ '.github/workflows/sc-drive-export-android-tools.yml' ]
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export current Android build tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          mkdir -p out/tools
+          cp -a "$BT/zipalign" out/tools/
+          cp -a "$BT/apksigner" out/tools/
+          cp -a "$BT/lib" out/tools/ || true
+          cp -a "$BT/lib64" out/tools/ || true
+          printf '%s\n' "$BT" > out/build-tools-path.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-Android-Build-Tools
+          path: out/**
+          if-no-files-found: error
+          retention-days: 1
