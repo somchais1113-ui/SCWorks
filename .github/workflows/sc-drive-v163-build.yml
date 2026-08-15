@@ -62,9 +62,9 @@ jobs:
           patch -p1 --batch --forward </tmp/v163.patch
           PATCH_STATUS=$?
           set -e
-          # CI reconstruction differs from the archived v1.6.0 source by one
-          # import/indentation context. The only expected rejects are two hunks
-          # in head_unit_screen.dart; apply their semantic content explicitly.
+          # CI reconstruction differs slightly from the archived v1.6.0 source.
+          # Only two known head_unit_screen.dart hunks may reject; preserve the
+          # semantic changes explicitly and reject anything else.
           if [[ $PATCH_STATUS -ne 0 ]]; then
             test -f lib/features/head_unit/head_unit_screen.dart.rej
             grep -q "package:flutter/scheduler.dart" lib/features/head_unit/head_unit_screen.dart.rej
@@ -77,15 +77,21 @@ jobs:
           s=p.read_text()
           if "import 'package:flutter/scheduler.dart';" not in s:
               s=s.replace("import 'package:flutter/material.dart';\n", "import 'package:flutter/material.dart';\nimport 'package:flutter/scheduler.dart';\n")
-          if "../../domain/spotify/spotify_models.dart" not in s:
-              s=s.replace("import '../../domain/weather_models.dart';\n", "import '../../domain/weather_models.dart';\nimport '../../domain/spotify/spotify_models.dart';\n")
           if "../../services/drive_data_service.dart" not in s:
               s=s.replace("import '../../services/drive_telemetry_service.dart';\n", "import '../../services/drive_telemetry_service.dart';\nimport '../../services/drive_data_service.dart';\n")
           if "../../widgets/spotify_live_progress.dart" not in s:
               s=s.replace("import '../../widgets/speed_debug_overlay.dart';\n", "import '../../widgets/speed_debug_overlay.dart';\nimport '../../widgets/spotify_live_progress.dart';\n")
-          ctor="    required this.telemetry,\n"
-          if "required this.driveData," not in s:
-              s=s.replace(ctor, ctor+"    required this.driveData,\n", 1)
+          # The CI base already has one driveData constructor in a nested dialog,
+          # so target HeadUnitScreen specifically instead of checking globally.
+          needle = """  const HeadUnitScreen({\n    required this.spotify,\n    required this.telemetry,\n"""
+          repl = """  const HeadUnitScreen({\n    required this.spotify,\n    required this.telemetry,\n    required this.driveData,\n"""
+          if repl not in s:
+              if needle not in s:
+                  raise SystemExit('HeadUnitScreen constructor marker missing')
+              s=s.replace(needle, repl, 1)
+          # Remove imports made obsolete by the new frame-synced instrument code.
+          s=s.replace("import '../../domain/teana_j32_powertrain.dart';\n", '')
+          s=s.replace("import '../../domain/spotify/spotify_models.dart';\n", '')
           p.write_text(s)
           rej=Path('lib/features/head_unit/head_unit_screen.dart.rej')
           if rej.exists(): rej.unlink()
@@ -97,12 +103,16 @@ jobs:
           grep -n 'transferPlaybackToDevice' lib/services/spotify_service.dart
           grep -n 'class DriveDataService' lib/services/drive_data_service.dart
           grep -n 'GPS COASTING' lib/services/drive_telemetry_service.dart
-          grep -n "required this.driveData" lib/features/head_unit/head_unit_screen.dart
+          sed -n '18,36p' lib/features/head_unit/head_unit_screen.dart
           test -z "$(find . -name '*.rej' -print -quit)"
 
       - name: Resolve dependencies
         working-directory: scdrive-app
         run: flutter pub get
+
+      - name: Apply safe Dart analyzer fixes
+        working-directory: scdrive-app
+        run: dart fix --apply
 
       - name: Strict analyze
         working-directory: scdrive-app
