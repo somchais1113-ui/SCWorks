@@ -1,0 +1,107 @@
+name: Build SC Drive v1.6.3 Phone Car GPS ODO
+
+on:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - '.github/workflows/sc-drive-v163-build.yml'
+      - 'build-assets/scdrive-v163-phone-car-gps-odo.patch.gz.b64'
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+
+      - name: Reconstruct v1.6.0 verified base
+        shell: bash
+        run: |
+          set -euxo pipefail
+          run_step() {
+            ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v160-speed-engine.yml "$1" >/tmp/v160-step.sh
+            bash /tmp/v160-step.sh
+          }
+          run_step 'Reconstruct verified v1.5.6 baseline'
+          run_step 'Apply native GNSS IMU VehicleSpeedEngine'
+          grep -n '^version: 1.6.0+14' scdrive-app/pubspec.yaml
+
+      - name: Apply v1.6.3 feature patch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          base64 -d build-assets/scdrive-v163-phone-car-gps-odo.patch.gz.b64 | gzip -dc >/tmp/v163.patch.raw
+          python3 - <<'PY'
+          from pathlib import Path
+          text=Path('/tmp/v163.patch.raw').read_text()
+          parts=text.split('diff -ruN ')
+          kept=[parts[0]]
+          for part in parts[1:]:
+              header=part.splitlines()[0] if part.splitlines() else ''
+              if 'patchbase/pubspec.lock' in header:
+                  continue
+              kept.append('diff -ruN '+part)
+          Path('/tmp/v163.patch').write_text(''.join(kept))
+          PY
+          cd scdrive-app
+          patch -p1 --batch --forward </tmp/v163.patch
+          mkdir -p assets/fonts
+          test -f assets/fonts/NissanOpti.otf || printf '\0' > assets/fonts/NissanOpti.otf
+          test -f assets/fonts/NissanOpti-Italic.otf || printf '\0' > assets/fonts/NissanOpti-Italic.otf
+          grep -n '^version: 1.6.3+17' pubspec.yaml
+          grep -n 'transferPlaybackToDevice' lib/services/spotify_service.dart
+          grep -n 'class DriveDataService' lib/services/drive_data_service.dart
+          grep -n 'GPS COASTING' lib/services/drive_telemetry_service.dart
+
+      - name: Resolve dependencies
+        working-directory: scdrive-app
+        run: flutter pub get
+
+      - name: Strict analyze
+        working-directory: scdrive-app
+        run: flutter analyze
+
+      - name: Build release candidate
+        working-directory: scdrive-app
+        env:
+          GOOGLE_MAPS_API_KEY: AIza00000000000000000000000000000000000
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: |
+          flutter build apk --release \
+            --dart-define=SPOTIFY_CLIENT_ID=00000000000000000000000000000000 \
+            --dart-define=SC_DRIVE_BUILD_PROFILE=production
+
+      - name: Verify candidate and export signing tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          mkdir -p out/tools/lib
+          cp "$APK" out/SC_Drive-v1.6.3-CI-DUMMY-CONFIG.apk
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          cp "$BT/apksigner" out/tools/apksigner
+          cp "$BT/zipalign" out/tools/zipalign
+          cp "$BT/lib/apksigner.jar" out/tools/lib/apksigner.jar
+          chmod +x out/tools/apksigner out/tools/zipalign
+          "$BT/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
+          sha256sum "$APK" > out/candidate.sha256
+          tar -czf out/SC_Drive-v1.6.3-CI-Source.tar.gz -C scdrive-app .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.6.3-CANDIDATE
+          path: out/**
+          if-no-files-found: error
+          retention-days: 7
