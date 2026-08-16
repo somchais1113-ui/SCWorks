@@ -48,6 +48,7 @@ jobs:
           echo '5aa9d5b47c7cf5a004c65eda3af63c34b4170efc667801998d6807415e56fe19  /tmp/v173.tar.gz' | sha256sum -c -
           tar -xzf /tmp/v173.tar.gz -C scdrive-app
           cd scdrive-app
+          python3 ../build-assets/v173-full-obd-diagnostic-s/compile_fix.py
           # CI-only placeholder font bytes. User-provided Nissan Brand binaries are never committed.
           cp assets/fonts/NissanOpti.otf assets/fonts/NissanBrand-Regular.otf
           cp assets/fonts/NissanOpti.otf assets/fonts/NissanBrand-Bold.otf
@@ -56,6 +57,8 @@ jobs:
           grep -n "family: NissanBrand" pubspec.yaml
           grep -n 'GENERIC_OBD_VERIFIED' android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdProbeModels.kt
           grep -n 'ATSH7DF' android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdManager.kt
+          grep -n 'drainStaleInput' android/app/src/main/kotlin/com/scdeport/scdrive/obd/ElmCommandQueue.kt
+          grep -n 'parseReportedFirmware' android/app/src/main/kotlin/com/scdeport/scdrive/obd/ElmResponseParser.kt
           grep -n 'RUN FULL OBD DIAGNOSTIC' lib/features/head_unit/head_unit_screen.dart
 
       - name: Resolve dependencies
