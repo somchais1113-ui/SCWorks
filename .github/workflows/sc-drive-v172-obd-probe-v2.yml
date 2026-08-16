@@ -1,0 +1,114 @@
+name: Build SC Drive v1.7.2 OBD Hardware Probe V2
+
+on:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - '.github/workflows/sc-drive-v172-obd-probe-v2.yml'
+      - 'build-assets/v172-obd-probe-v2b/**'
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+
+      - name: Reconstruct verified v1.7.0 base
+        shell: bash
+        run: |
+          set -euxo pipefail
+          run_v170_step() {
+            ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v170-obd-phase1.yml "$1" >/tmp/v170-step.sh
+            bash /tmp/v170-step.sh
+          }
+          run_v170_step 'Reconstruct verified v1.6.5 base'
+          run_v170_step 'Apply OBD Phase 1 hardware-gate integration'
+          cd scdrive-app
+          grep -n '^version: 1.7.0+20' pubspec.yaml
+
+      - name: Apply OBD Hardware Probe V2
+        shell: bash
+        run: |
+          set -euxo pipefail
+          OBD=scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/obd
+          cp build-assets/v172-obd-probe-v2b/ObdProbeModels.kt "$OBD/ObdProbeModels.kt"
+          cp build-assets/v172-obd-probe-v2b/ElmCommand.kt "$OBD/ElmCommand.kt"
+          cp build-assets/v172-obd-probe-v2b/ElmCommandQueue.kt "$OBD/ElmCommandQueue.kt"
+          cp build-assets/v172-obd-probe-v2b/ElmResponseParser.kt "$OBD/ElmResponseParser.kt"
+          cp build-assets/v172-obd-probe-v2b/ObdDiagnostics.kt "$OBD/ObdDiagnostics.kt"
+          cd scdrive-app
+          python3 ../build-assets/v172-obd-probe-v2b/patch_manager.py
+          python3 ../build-assets/v172-obd-probe-v2b/patch_ui.py
+          dart format lib/features/head_unit/head_unit_screen.dart lib/features/head_unit/drive_deck_panel.dart
+          grep -n '^version: 1.7.2+22' pubspec.yaml
+          grep -n 'SUSPICIOUS_ZERO_CAPABILITY_BITMAP' android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdManager.kt
+          grep -n 'ATTP6' android/app/src/main/kotlin/com/scdeport/scdrive/obd/ObdManager.kt
+          grep -n 'NissanOpti' lib/features/head_unit/head_unit_screen.dart | head
+          grep -n '0xFFE53935' lib/features/head_unit/drive_deck_panel.dart
+
+      - name: Resolve dependencies
+        working-directory: scdrive-app
+        run: flutter pub get
+
+      - name: Apply safe Dart analyzer fixes
+        working-directory: scdrive-app
+        run: dart fix --apply
+
+      - name: Strict Flutter analyze
+        working-directory: scdrive-app
+        run: flutter analyze
+
+      - name: Build release candidate
+        working-directory: scdrive-app
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: |
+          set -euxo pipefail
+          test -n "$GOOGLE_MAPS_API_KEY"
+          test -n "$SPOTIFY_CLIENT_ID"
+          flutter build apk --release \
+            --dart-define=SPOTIFY_CLIENT_ID="$SPOTIFY_CLIENT_ID" \
+            --dart-define=SC_DRIVE_BUILD_PROFILE=production
+
+      - name: Verify candidate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
+          mkdir -p out
+          cp "$APK" out/SC_Drive-v1.7.2-OBD-Hardware-Probe-V2-CANDIDATE.apk
+          sha256sum "$APK" > out/candidate.sha256
+          cat > out/BUILD-VERIFICATION.txt <<'EOF'
+          SC Drive v1.7.2+22 OBD Hardware Probe V2
+          Flutter analyze: PASS
+          Release build: PASS
+          APK ZIP integrity: PASS
+          16 KB zipalign: PASS
+          OBD speed fusion: NOT ENABLED (hardware verification gate preserved)
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.7.2-OBD-Hardware-Probe-V2-CANDIDATE
+          path: out/**
+          if-no-files-found: error
+          retention-days: 7
