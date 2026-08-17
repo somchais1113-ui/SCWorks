@@ -1,0 +1,31 @@
+name: Diagnose SC Drive v1.8.1 UI Polish Integrity
+
+on:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - '.github/workflows/sc-drive-v181-polish-integrity.yml'
+  workflow_dispatch:
+
+jobs:
+  integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check each UI polish chunk
+        shell: bash
+        run: |
+          set +e
+          bad=0
+          check() {
+            expected="$1"
+            file="$2"
+            actual=$(sha256sum "$file" | awk '{print $1}')
+            echo "$file expected=$expected actual=$actual"
+            if [[ "$actual" != "$expected" ]]; then bad=1; fi
+          }
+          check 3084a221710417b7e4a93e97a9bfdcbb27b8522e1ae9687220e65da2097c6775 build-assets/v181-polish-delta-s/00.b64
+          check 278b308da7e062196290f585beee0ddfb06fdff8cefc3da49b17f26ec7e72c62 build-assets/v181-polish-delta-s/01.b64
+          check dd7f173692138a35bc9dc70e226b4bfb7bd3f4bf1664e39b33a3f7d15917cd0e build-assets/v181-polish-delta-s/02.b64
+          check 8e6a94ea2e3c0d55e0dcaab09076b9cf2cbe2b5da390ad819bfb30f75f722cf7 build-assets/v181-polish-delta-s/03.b64
+          exit "$bad"
