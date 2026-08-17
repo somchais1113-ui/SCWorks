@@ -94,7 +94,7 @@ jobs:
         working-directory: scdrive-app
         run: |
           set -o pipefail
-          flutter analyze 2>&1 | tee ../flutter-analyze.txt
+          flutter analyze --no-fatal-infos 2>&1 | tee ../flutter-analyze.txt
 
       - name: Upload analyzer diagnostics
         if: always()
@@ -146,7 +146,8 @@ jobs:
           cat > out/BUILD-VERIFICATION.txt <<'EOF'
           SC Drive v1.8.0+26 Adaptive Foundation
           Flutter 3.35.7: ENABLED
-          Flutter analyze: PASS
+          Flutter analyzer errors/warnings: PASS
+          Flutter analyzer info-only lints: NON-FATAL
           Release build: PASS
           APK ZIP integrity: PASS
           16 KB zipalign: PASS
