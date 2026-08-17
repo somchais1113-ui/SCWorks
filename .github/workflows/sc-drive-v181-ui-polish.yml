@@ -73,6 +73,7 @@ jobs:
           echo 'b95c966c7c2c678ab56bd2aea9f7f1bb4bcde6688a3e13ea483db057e4339ce7  /tmp/v181-polish.tar.gz' | sha256sum -c -
           tar -xzf /tmp/v181-polish.tar.gz -C scdrive-app
           patch -d scdrive-app -p1 --forward --batch < build-assets/v181-polish-delta-s/ui-const-fix.patch
+          patch -d scdrive-app -p1 --forward --batch < build-assets/v181-polish-delta-s/ui-radio-lint-fix.patch
           cd scdrive-app
           grep -n '^version: 1.8.1+27' pubspec.yaml
           sha256sum -c /tmp/v181-physics-authority.sha256
