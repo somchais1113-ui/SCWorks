@@ -50,10 +50,6 @@ jobs:
           cd scdrive-app
           test -f assets/fonts/NissanBrand-Regular.otf
           test -f assets/fonts/NissanBrand-Bold.otf
-          dart format \
-            lib/features/head_unit/head_unit_screen.dart \
-            lib/services/drive_telemetry_service.dart \
-            lib/widgets/speed_debug_overlay.dart
           grep -n '^version: 1.8.0+26' pubspec.yaml
           grep -n 'data class SpeedObservation' android/app/src/main/kotlin/com/scdeport/scdrive/speed/ObservationModels.kt
           grep -n 'data class MotionObservation' android/app/src/main/kotlin/com/scdeport/scdrive/speed/ObservationModels.kt
@@ -66,10 +62,6 @@ jobs:
       - name: Resolve dependencies
         working-directory: scdrive-app
         run: flutter pub get
-
-      - name: Apply safe Dart analyzer fixes
-        working-directory: scdrive-app
-        run: dart fix --apply
 
       - name: Strict Flutter analyze
         working-directory: scdrive-app
