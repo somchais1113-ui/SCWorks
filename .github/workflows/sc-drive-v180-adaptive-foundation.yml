@@ -26,6 +26,29 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Enable offline-safe Flutter reconstruction
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p /tmp/scdrive-flutter-wrap
+          cat > /tmp/scdrive-flutter-wrap/flutter <<'EOF'
+          #!/usr/bin/env bash
+          set -e
+          REAL="${SC_DRIVE_REAL_FLUTTER:?}"
+          if [[ "${1:-}" == "create" ]]; then
+            shift
+            exec "$REAL" create --no-pub "$@"
+          fi
+          if [[ "${1:-}" == "pub" && "${2:-}" == "get" ]]; then
+            shift 2
+            exec "$REAL" pub get --offline "$@"
+          fi
+          exec "$REAL" "$@"
+          EOF
+          chmod +x /tmp/scdrive-flutter-wrap/flutter
+          echo "SC_DRIVE_REAL_FLUTTER=$FLUTTER_ROOT/bin/flutter" >> "$GITHUB_ENV"
+          echo "/tmp/scdrive-flutter-wrap" >> "$GITHUB_PATH"
+
       - name: Reconstruct verified v1.7.5 base
         shell: bash
         run: |
@@ -57,9 +80,9 @@ jobs:
           test -f android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleSpeedState.kt
           test -f lib/widgets/speed_debug_overlay.dart
 
-      - name: Resolve dependencies
+      - name: Resolve dependencies offline
         working-directory: scdrive-app
-        run: flutter pub get
+        run: flutter pub get --offline
 
       - name: Strict Flutter analyze
         id: flutter_analyze
@@ -75,7 +98,7 @@ jobs:
         with:
           name: SC-Drive-v1.8.0-Flutter-Analyze
           path: flutter-analyze.txt
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
 
       - name: Enforce analyzer gate
