@@ -1,0 +1,189 @@
+name: Build SC Drive v1.8.1 UI Media Typography Polish
+
+on:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - '.github/workflows/sc-drive-v181-ui-polish.yml'
+      - 'build-assets/v181-polish-delta-s/**'
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+
+      - name: Enable clean Flutter reconstruction
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -f "$PUB_CACHE/credentials.json" "$HOME/.pub-cache/credentials.json" || true
+          mkdir -p /tmp/scdrive-flutter-wrap
+          cat > /tmp/scdrive-flutter-wrap/flutter <<'EOF'
+          #!/usr/bin/env bash
+          set -e
+          REAL="${SC_DRIVE_REAL_FLUTTER:?}"
+          if [[ "${1:-}" == "create" ]]; then
+            shift
+            exec "$REAL" create --no-pub "$@"
+          fi
+          if [[ "${1:-}" == "pub" && "${2:-}" == "get" ]]; then
+            shift 2
+            rm -f "${PUB_CACHE:-$HOME/.pub-cache}/credentials.json" "$HOME/.pub-cache/credentials.json" || true
+            exec "$REAL" pub get "$@"
+          fi
+          exec "$REAL" "$@"
+          EOF
+          chmod +x /tmp/scdrive-flutter-wrap/flutter
+          echo "SC_DRIVE_REAL_FLUTTER=$FLUTTER_ROOT/bin/flutter" >> "$GITHUB_ENV"
+          echo "/tmp/scdrive-flutter-wrap" >> "$GITHUB_PATH"
+
+      - name: Reconstruct verified v1.8.1 OpenVehicle base
+        shell: bash
+        run: |
+          set -euxo pipefail
+          run_v181_step() {
+            ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v181-openvehicle.yml "$1" >/tmp/v181-step.sh
+            bash /tmp/v181-step.sh
+          }
+          run_v181_step 'Reconstruct verified v1.8.0 base'
+          run_v181_step 'Apply v1.8.1 SC OpenVehicle overlay'
+          grep -n '^version: 1.8.1+27' scdrive-app/pubspec.yaml
+
+      - name: Apply v1.8.1 UI media typography polish delta
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat build-assets/v181-polish-delta-s/{00,01,02,03}.b64 > /tmp/v181-polish.b64
+          echo 'b87d61fe34589650c545b9eaccddee505d8082f138c19fb30cb0c99c37034357  /tmp/v181-polish.b64' | sha256sum -c -
+          base64 -d /tmp/v181-polish.b64 > /tmp/v181-polish.tar.gz
+          echo 'b95c966c7c2c678ab56bd2aea9f7f1bb4bcde6688a3e13ea483db057e4339ce7  /tmp/v181-polish.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/v181-polish.tar.gz -C scdrive-app
+          cd scdrive-app
+          grep -n '^version: 1.8.1+27' pubspec.yaml
+          sha256sum -c /tmp/v181-physics-authority.sha256
+          test -f lib/services/car_radio_service.dart
+          test -f lib/features/head_unit/car_radio_panel.dart
+          grep -q 'PageView' lib/features/head_unit/head_unit_screen.dart
+          grep -q 'CarRadioPanel' lib/features/head_unit/head_unit_screen.dart
+          grep -q 'CarRadioService' lib/app/app.dart
+          grep -q 'com.scdeport.scdrive/car_radio' lib/services/car_radio_service.dart
+          grep -q 'RADIO HARDWARE LINK PENDING' lib/features/head_unit/car_radio_panel.dart
+          grep -q '0xB3FFFFFF' lib/features/head_unit/drive_deck_panel.dart
+          grep -q 'Duration(milliseconds: 40)' lib/features/head_unit/drive_deck_panel.dart
+          if grep -Rni "fontFamily:[[:space:]]*['\"]monospace['\"]" lib; then
+            echo 'Explicit monospace font family remains in Flutter UI.' >&2
+            exit 1
+          fi
+
+      - name: Resolve dependencies
+        working-directory: scdrive-app
+        run: |
+          rm -f "$PUB_CACHE/credentials.json" "$HOME/.pub-cache/credentials.json" || true
+          flutter pub get
+
+      - name: Android OpenVehicle unit tests
+        working-directory: scdrive-app/android
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Strict Flutter analyze
+        id: flutter_analyze
+        continue-on-error: true
+        working-directory: scdrive-app
+        run: |
+          set -o pipefail
+          flutter analyze --no-fatal-infos 2>&1 | tee ../flutter-analyze-v181-ui.txt
+
+      - name: Upload analyzer diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.8.1-UI-Polish-Flutter-Analyze
+          path: flutter-analyze-v181-ui.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Enforce analyzer gate
+        if: steps.flutter_analyze.outcome == 'failure'
+        run: exit 1
+
+      - name: Build release candidate
+        working-directory: scdrive-app
+        env:
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: |
+          set -euxo pipefail
+          flutter build apk --release \
+            --dart-define=SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID:-}" \
+            --dart-define=SC_DRIVE_BUILD_PROFILE=production
+
+      - name: Verify candidate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
+          unzip -l "$APK" | grep 'assets/flutter_assets/assets/fonts/NissanBrand-Regular.otf'
+          unzip -l "$APK" | grep 'assets/flutter_assets/assets/fonts/NissanBrand-Bold.otf'
+          grep -n '^version: 1.8.1+27' scdrive-app/pubspec.yaml
+          mkdir -p out/lib
+          cp "$APK" out/SC_Drive-v1.8.1-OpenVehicle-UI-Polish-CANDIDATE.apk
+          cp "$BT/apksigner" out/apksigner
+          cp "$BT/zipalign" out/zipalign
+          cp "$BT/aapt" out/aapt
+          cp "$BT/lib/apksigner.jar" out/lib/apksigner.jar
+          chmod +x out/apksigner out/zipalign out/aapt
+          "$BT/aapt" dump badging "$APK" | tee out/badging.txt
+          grep -q "package: name='com.scdeport.scdrive' versionCode='27' versionName='1.8.1'" out/badging.txt
+          sha256sum "$APK" > out/candidate.sha256
+          cat > out/BUILD-VERIFICATION.txt <<'EOF'
+          SC Drive v1.8.1+27 — OpenVehicle + UI/Media/Typography Polish
+          Flutter 3.35.7: ENABLED
+          Android app-module unit tests: PASS
+          Flutter analyzer errors/warnings: PASS
+          Release build: PASS
+          APK ZIP integrity: PASS
+          16 KB zipalign: PASS
+          Physics authority hashes: PRESERVED FROM v1.8.0
+          Spotify page: PRESERVED
+          Spotify <-> Car Radio swipe pager: ENABLED
+          Car Radio vendor-neutral preview architecture: ENABLED
+          Physical radio hardware control: NOT CLAIMED UNTIL VENDOR API IS VERIFIED
+          Google Maps custom zoom controls: RIGHT-SIDE / NEAR COMPASS / WHITE 70% TRANSPARENT
+          Map camera visual loop target: 25 Hz
+          Speed 3-digit typography: NISSAN REGULAR / EXPANDED FIT
+          Clock typography: NISSAN BOLD / REDUCED VISUAL WEIGHT
+          Explicit monospace Flutter font override: NONE
+          Repaint isolation: ENABLED FOR MAJOR HEAD-UNIT PANELS
+          CI candidate may contain placeholder Nissan Brand bytes from reconstruction; user-supplied production Nissan fonts are injected privately during final APK finalization.
+          Google Maps deployment configuration: supplied from repository production secret during build.
+          Spotify Client ID: supplied from repository production secret during AOT build.
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.8.1-OpenVehicle-UI-Polish-CANDIDATE
+          path: out/**
+          if-no-files-found: error
+          retention-days: 7
