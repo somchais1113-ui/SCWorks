@@ -54,6 +54,17 @@ jobs:
           echo '2bff567516f9d84f47853078460b07312604b60173b86e1e284f9d18410b5e8a  /tmp/v174.tar.gz' | sha256sum -c -
           tar -xzf /tmp/v174.tar.gz -C scdrive-app
           cd scdrive-app
+          # Android exposes location power-save mode through PowerManager, not LocationManager.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleSpeedEngine.kt')
+          s = p.read_text()
+          s = s.replace('import android.location.LocationManager\n', '')
+          s = s.replace('    private val locationManager = appContext.getSystemService(Context.LOCATION_SERVICE) as LocationManager\n', '')
+          s = s.replace('locationManager.locationPowerSaveMode', 'powerManager.locationPowerSaveMode')
+          s = s.replace('LocationManager.LOCATION_MODE_', 'PowerManager.LOCATION_MODE_')
+          p.write_text(s)
+          PY
           # Keep CI font placeholders from the v1.7.3 reconstruction. User-provided Nissan Brand binaries are injected locally only.
           test -f assets/fonts/NissanBrand-Regular.otf
           test -f assets/fonts/NissanBrand-Bold.otf
@@ -66,6 +77,7 @@ jobs:
           grep -n 'foregroundServiceType="location"' android/app/src/main/AndroidManifest.xml
           grep -n 'locationIntervalMs = 150L' android/app/src/main/kotlin/com/scdeport/scdrive/speed/SpeedEngineConfig.kt
           grep -n 'enginePeriodMs = 33L' android/app/src/main/kotlin/com/scdeport/scdrive/speed/SpeedEngineConfig.kt
+          grep -n 'powerManager.locationPowerSaveMode' android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleSpeedEngine.kt
           grep -n '_speedKph = _displaySpeedKph' lib/services/drive_telemetry_service.dart
           grep -n 'family: NissanBrand' pubspec.yaml
 
