@@ -67,7 +67,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          cat build-assets/v181-polish-delta-s/{00,01,02,03}.b64 > /tmp/v181-polish.b64
+          cat build-assets/v181-polish-delta-s/00.b64 build-assets/v181-polish-delta-s/01p{0,1,2,3}.b64 build-assets/v181-polish-delta-s/02.b64 build-assets/v181-polish-delta-s/03.b64 > /tmp/v181-polish.b64
           echo 'b87d61fe34589650c545b9eaccddee505d8082f138c19fb30cb0c99c37034357  /tmp/v181-polish.b64' | sha256sum -c -
           base64 -d /tmp/v181-polish.b64 > /tmp/v181-polish.tar.gz
           echo 'b95c966c7c2c678ab56bd2aea9f7f1bb4bcde6688a3e13ea483db057e4339ce7  /tmp/v181-polish.tar.gz' | sha256sum -c -
