@@ -21,8 +21,8 @@ jobs:
           cp "$BT/zipalign" out/zipalign
           if [ -f "$BT/lib64/libc++.so" ]; then
             cp "$BT/lib64/libc++.so" out/lib64/libc++.so
-          elif [ -f "$ANDROID_HOME"/emulator/lib64/libc++/libc++.so" ]; then
-            cp "$ANDROID_HOME"/emulator/lib64/libc++/libc++.so out/lib64/libc++.so
+          elif [ -f "$ANDROID_HOME/emulator/lib64/libc++/libc++.so" ]; then
+            cp "$ANDROID_HOME/emulator/lib64/libc++/libc++.so" out/lib64/libc++.so
           else
             found=$(find "$ANDROID_HOME" -type f -name 'libc++.so' | head -1)
             test -n "$found"
