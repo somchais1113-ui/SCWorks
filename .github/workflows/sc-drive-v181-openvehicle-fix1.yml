@@ -1,0 +1,207 @@
+name: Build SC Drive v1.8.1 SC OpenVehicle Foundation FIX1
+
+on:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - '.github/workflows/sc-drive-v181-openvehicle-fix1.yml'
+      - 'build-assets/v181-openvehicle-fix1-s/**'
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+
+      - name: Enable clean Flutter reconstruction
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -f "$PUB_CACHE/credentials.json" "$HOME/.pub-cache/credentials.json" || true
+          mkdir -p /tmp/scdrive-flutter-wrap
+          cat > /tmp/scdrive-flutter-wrap/flutter <<'EOF'
+          #!/usr/bin/env bash
+          set -e
+          REAL="${SC_DRIVE_REAL_FLUTTER:?}"
+          if [[ "${1:-}" == "create" ]]; then
+            shift
+            exec "$REAL" create --no-pub "$@"
+          fi
+          if [[ "${1:-}" == "pub" && "${2:-}" == "get" ]]; then
+            shift 2
+            rm -f "${PUB_CACHE:-$HOME/.pub-cache}/credentials.json" "$HOME/.pub-cache/credentials.json" || true
+            exec "$REAL" pub get "$@"
+          fi
+          exec "$REAL" "$@"
+          EOF
+          chmod +x /tmp/scdrive-flutter-wrap/flutter
+          echo "SC_DRIVE_REAL_FLUTTER=$FLUTTER_ROOT/bin/flutter" >> "$GITHUB_ENV"
+          echo "/tmp/scdrive-flutter-wrap" >> "$GITHUB_PATH"
+
+      - name: Reconstruct verified v1.8.0 base
+        shell: bash
+        run: |
+          set -euxo pipefail
+          run_v180_step() {
+            ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v180-adaptive-foundation.yml "$1" >/tmp/v180-step.sh
+            bash /tmp/v180-step.sh
+          }
+          run_v180_step 'Reconstruct verified v1.7.5 base'
+          run_v180_step 'Apply v1.8.0 adaptive foundation overlay'
+          grep -n '^version: 1.8.0+26' scdrive-app/pubspec.yaml
+          cd scdrive-app
+          sha256sum \
+            android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleVelocityEstimator.kt \
+            android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleDynamicsEngine.kt \
+            android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleSpeedState.kt \
+            android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleImuProvider.kt \
+            > /tmp/v181-physics-authority.sha256
+
+      - name: Apply v1.8.1 SC OpenVehicle FIX1 overlay
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat build-assets/v181-openvehicle-fix1-s/{00,01,02,03,04,05}.b64 > /tmp/v181.b64
+          echo '501b348b5918714a84d985c64c91d4fc511de0c81ecb60e2a0b64a92e5f39c0e  /tmp/v181.b64' | sha256sum -c -
+          base64 -d /tmp/v181.b64 > /tmp/v181.tar.gz
+          echo '4eddbfab8a055d22e2cd8817b8f95bf8144fb5cedc3c973049fe097bfad55a42  /tmp/v181.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/v181.tar.gz -C scdrive-app
+          cd scdrive-app
+          grep -n '^version: 1.8.1+27' pubspec.yaml
+          sha256sum -c /tmp/v181-physics-authority.sha256
+          test -f android/app/src/main/kotlin/com/scdeport/scdrive/vehicle/VehicleState.kt
+          test -f android/app/src/main/kotlin/com/scdeport/scdrive/vehicle/VehicleSignal.kt
+          test -f android/app/src/main/kotlin/com/scdeport/scdrive/vehicle/VehicleIdentity.kt
+          test -f android/app/src/main/kotlin/com/scdeport/scdrive/vehicle/VehicleCapabilities.kt
+          test -f android/app/src/main/kotlin/com/scdeport/scdrive/vehicle/VehicleProfile.kt
+          test -f android/app/src/main/kotlin/com/scdeport/scdrive/vehicle/VehicleProfileResolver.kt
+          test -f android/app/src/main/kotlin/com/scdeport/scdrive/vehicle/VehicleSignalArbitrator.kt
+          test -f android/app/src/main/kotlin/com/scdeport/scdrive/vehicle/VehicleHealth.kt
+          test -f android/app/src/main/kotlin/com/scdeport/scdrive/bridge/VehicleStateEventStream.kt
+          test -f android/app/src/main/kotlin/com/scdeport/scdrive/speed/AdaptiveProfileSchema.kt
+          test -f lib/models/vehicle_state.dart
+          test -f lib/services/vehicle_state_service.dart
+          grep -q 'productionAuthority = VehicleSignalSource.ESTIMATOR' android/app/src/main/kotlin/com/scdeport/scdrive/vehicle/VehicleStateAssembler.kt
+          grep -q 'canInjectionAvailable = false' android/app/src/main/kotlin/com/scdeport/scdrive/vehicle/VehicleStateAssembler.kt
+          grep -q 'com.scdeport.scdrive/vehicle_state' android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt
+          grep -q 'CURRENT = 2' android/app/src/main/kotlin/com/scdeport/scdrive/speed/AdaptiveProfileSchema.kt
+          if grep -RniE '^[[:space:]]*(fun|suspend fun)[[:space:]]+(send|transmit|inject|write)' android/app/src/main/kotlin/com/scdeport/scdrive/vehicle/can; then
+            echo 'Unsafe CAN write/injection API detected.' >&2
+            exit 1
+          fi
+
+      - name: Resolve dependencies
+        working-directory: scdrive-app
+        run: |
+          rm -f "$PUB_CACHE/credentials.json" "$HOME/.pub-cache/credentials.json" || true
+          flutter pub get
+
+      - name: Android OpenVehicle app-module unit tests
+        working-directory: scdrive-app/android
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Strict Flutter analyze
+        id: flutter_analyze
+        continue-on-error: true
+        working-directory: scdrive-app
+        run: |
+          set -o pipefail
+          flutter analyze --no-fatal-infos 2>&1 | tee ../flutter-analyze-v181-fix1.txt
+
+      - name: Upload analyzer diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.8.1-FIX1-Flutter-Analyze
+          path: flutter-analyze-v181-fix1.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Enforce analyzer gate
+        if: steps.flutter_analyze.outcome == 'failure'
+        run: exit 1
+
+      - name: Build release candidate
+        working-directory: scdrive-app
+        env:
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: |
+          set -euxo pipefail
+          flutter build apk --release \
+            --dart-define=SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID:-}" \
+            --dart-define=SC_DRIVE_BUILD_PROFILE=production
+
+      - name: Verify candidate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
+          unzip -l "$APK" | grep 'assets/flutter_assets/assets/fonts/NissanBrand-Regular.otf'
+          unzip -l "$APK" | grep 'assets/flutter_assets/assets/fonts/NissanBrand-Bold.otf'
+          grep -n '^version: 1.8.1+27' scdrive-app/pubspec.yaml
+          mkdir -p out/lib
+          cp "$APK" out/SC_Drive-v1.8.1-SC-OpenVehicle-Foundation-FIX1-CANDIDATE.apk
+          cp "$BT/apksigner" out/apksigner
+          cp "$BT/zipalign" out/zipalign
+          cp "$BT/aapt" out/aapt
+          cp "$BT/lib/apksigner.jar" out/lib/apksigner.jar
+          chmod +x out/apksigner out/zipalign out/aapt
+          "$BT/aapt" dump badging "$APK" | tee out/badging.txt
+          grep -q "package: name='com.scdeport.scdrive' versionCode='27' versionName='1.8.1'" out/badging.txt
+          sha256sum "$APK" > out/candidate.sha256
+          cat > out/BUILD-VERIFICATION.txt <<'EOF'
+          SC Drive v1.8.1+27 — SC OpenVehicle Foundation FIX1
+          Flutter 3.35.7: ENABLED
+          Android OpenVehicle app-module unit tests: PASS
+          Section 32 coverage: signal validity, capabilities, profile resolution, state aggregation, source arbitration, staleness, unknown/null, OBD normalization, fallback, profile serialization, adaptive schema compatibility
+          Flutter analyzer errors/warnings: PASS
+          Flutter analyzer info-only lints: NON-FATAL
+          Release build: PASS
+          APK ZIP integrity: PASS
+          16 KB zipalign: PASS
+          VehicleVelocityEstimator / VehicleDynamicsEngine / VehicleSpeedState / VehicleImuProvider: PRESERVED FROM v1.8.0
+          One physics pipeline: PRESERVED
+          VehicleState / VehicleSignal / VehicleIdentity / VehicleCapabilities / VehicleProfile / VehicleHealth: ENABLED
+          Conservative VehicleProfileResolver: ENABLED
+          OBD standard PID -> VehicleSignal normalization: ENABLED
+          Measurement age / latency / confidence / quality metadata: ENABLED
+          Production speed authority: ESTIMATOR / GNSS+IMU PRESERVED
+          OBD speed authority promotion: DISABLED / SHADOW ONLY
+          CAN foundation: READ ONLY / NO SEND OR INJECTION API
+          DBC-style decode foundation: ENABLED ARCHITECTURALLY
+          Adaptive OBD characterization: BOUNDED STATISTICS ONLY
+          OpenVehicle Flutter EventChannel + diagnostics: ENABLED
+          CI contains placeholder Nissan Brand bytes only; production fonts are injected during finalization.
+          Google Maps deployment configuration: supplied from repository production secret during build.
+          Spotify Client ID: supplied from repository production secret during AOT build.
+          Physical OBD/CAN/head-unit road verification: NOT CLAIMED / REQUIRED BEFORE SOURCE PROMOTION.
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.8.1-SC-OpenVehicle-Foundation-FIX1-CANDIDATE
+          path: out/**
+          if-no-files-found: error
+          retention-days: 7
