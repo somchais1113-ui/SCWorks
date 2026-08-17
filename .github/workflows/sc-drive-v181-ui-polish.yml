@@ -81,7 +81,7 @@ jobs:
           grep -q 'CarRadioPanel' lib/features/head_unit/head_unit_screen.dart
           grep -q 'CarRadioService' lib/app/app.dart
           grep -q 'com.scdeport.scdrive/car_radio' lib/services/car_radio_service.dart
-          grep -q 'RADIO HARDWARE LINK PENDING' lib/features/head_unit/car_radio_panel.dart
+          grep -q 'RADIO HARDWARE LINK PENDING' lib/services/car_radio_service.dart
           grep -q '0xB3FFFFFF' lib/features/head_unit/drive_deck_panel.dart
           grep -q 'Duration(milliseconds: 40)' lib/features/head_unit/drive_deck_panel.dart
           if grep -Rni "fontFamily:[[:space:]]*['\"]monospace['\"]" lib; then
