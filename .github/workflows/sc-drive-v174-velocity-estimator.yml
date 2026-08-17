@@ -64,8 +64,8 @@ jobs:
           grep -n 'class VehicleTelemetryForegroundService' android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleTelemetryForegroundService.kt
           grep -n 'FOREGROUND_SERVICE_LOCATION' android/app/src/main/AndroidManifest.xml
           grep -n 'foregroundServiceType="location"' android/app/src/main/AndroidManifest.xml
-          grep -n 'desiredLocationIntervalMs = 150L' android/app/src/main/kotlin/com/scdeport/scdrive/speed/SpeedEngineConfig.kt
-          grep -n 'estimatorPeriodMs = 33L' android/app/src/main/kotlin/com/scdeport/scdrive/speed/SpeedEngineConfig.kt
+          grep -n 'locationIntervalMs = 150L' android/app/src/main/kotlin/com/scdeport/scdrive/speed/SpeedEngineConfig.kt
+          grep -n 'enginePeriodMs = 33L' android/app/src/main/kotlin/com/scdeport/scdrive/speed/SpeedEngineConfig.kt
           grep -n '_speedKph = _displaySpeedKph' lib/services/drive_telemetry_service.dart
           grep -n 'family: NissanBrand' pubspec.yaml
 
