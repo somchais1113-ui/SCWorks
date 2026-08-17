@@ -1,0 +1,12 @@
+--- a/lib/features/head_unit/car_radio_panel.dart
++++ b/lib/features/head_unit/car_radio_panel.dart
+@@ -14,9 +14,7 @@
+   final CarRadioService radio;
+   final bool compact;
+ 
+-  static const _accent = Color(0xFFE72846);
+   static const _panel = Color(0xFF0D1117);
+-  static const _card = Color(0xFF101720);
+ 
+   @override
+   Widget build(BuildContext context) {
