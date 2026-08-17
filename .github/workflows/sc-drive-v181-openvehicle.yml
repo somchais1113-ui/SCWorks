@@ -112,7 +112,7 @@ jobs:
         env:
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
           SC_DRIVE_ALLOW_TEST_SIGNING: '1'
-        run: ./gradlew testDebugUnitTest --no-daemon
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
 
       - name: Strict Flutter analyze
         id: flutter_analyze
