@@ -1,0 +1,38 @@
+name: Export Android Build Tools Runtime
+
+on:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - '.github/workflows/export-android-build-tools-runtime.yml'
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect build-tools runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          mkdir -p out/lib64
+          cp "$BT/zipalign" out/zipalign
+          if [ -f "$BT/lib64/libc++.so" ]; then
+            cp "$BT/lib64/libc++.so" out/lib64/libc++.so
+          elif [ -f "$ANDROID_HOME"/emulator/lib64/libc++/libc++.so" ]; then
+            cp "$ANDROID_HOME"/emulator/lib64/libc++/libc++.so out/lib64/libc++.so
+          else
+            found=$(find "$ANDROID_HOME" -type f -name 'libc++.so' | head -1)
+            test -n "$found"
+            cp "$found" out/lib64/libc++.so
+          fi
+          ldd out/zipalign || true
+          ls -lh out/zipalign out/lib64/libc++.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Android-Build-Tools-Runtime
+          path: out/**
+          if-no-files-found: error
+          retention-days: 1
