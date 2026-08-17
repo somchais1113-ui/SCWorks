@@ -54,7 +54,7 @@ jobs:
           grep -n 'data class SpeedObservation' android/app/src/main/kotlin/com/scdeport/scdrive/speed/ObservationModels.kt
           grep -n 'data class MotionObservation' android/app/src/main/kotlin/com/scdeport/scdrive/speed/ObservationModels.kt
           grep -n 'class AdaptiveProfileStore' android/app/src/main/kotlin/com/scdeport/scdrive/speed/AdaptiveProfileStore.kt
-          grep -n 'enum class LearningEligibility' android/app/src/main/kotlin/com/scdeport/scdrive/speed/AdaptiveLearningModels.kt
+          grep -n 'data class LearningEligibility' android/app/src/main/kotlin/com/scdeport/scdrive/speed/AdaptiveLearningModels.kt
           grep -n 'learningEligible' android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleSpeedState.kt
           grep -n 'adaptiveProfileVersion' android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleSpeedState.kt
           grep -n 'LEARNING' lib/widgets/speed_debug_overlay.dart
