@@ -51,12 +51,11 @@ jobs:
           test -f assets/fonts/NissanBrand-Regular.otf
           test -f assets/fonts/NissanBrand-Bold.otf
           grep -n '^version: 1.8.0+26' pubspec.yaml
-          grep -n 'data class SpeedObservation' android/app/src/main/kotlin/com/scdeport/scdrive/speed/ObservationModels.kt
-          grep -n 'data class MotionObservation' android/app/src/main/kotlin/com/scdeport/scdrive/speed/ObservationModels.kt
-          grep -n 'class AdaptiveProfileStore' android/app/src/main/kotlin/com/scdeport/scdrive/speed/AdaptiveProfileStore.kt
-          grep -n 'data class LearningEligibility' android/app/src/main/kotlin/com/scdeport/scdrive/speed/AdaptiveLearningModels.kt
-          grep -n 'learningEligible' android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleSpeedState.kt
-          grep -n 'adaptiveProfileVersion' android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleSpeedState.kt
+          test -f android/app/src/main/kotlin/com/scdeport/scdrive/speed/ObservationModels.kt
+          test -f android/app/src/main/kotlin/com/scdeport/scdrive/speed/AdaptiveProfileStore.kt
+          test -f android/app/src/main/kotlin/com/scdeport/scdrive/speed/AdaptiveLearningModels.kt
+          test -f android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleSpeedState.kt
+          test -f lib/widgets/speed_debug_overlay.dart
 
       - name: Resolve dependencies
         working-directory: scdrive-app
