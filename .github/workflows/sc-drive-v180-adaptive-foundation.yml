@@ -26,10 +26,11 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Enable offline-safe Flutter reconstruction
+      - name: Enable clean Flutter reconstruction
         shell: bash
         run: |
           set -euxo pipefail
+          rm -f "$PUB_CACHE/credentials.json" "$HOME/.pub-cache/credentials.json" || true
           mkdir -p /tmp/scdrive-flutter-wrap
           cat > /tmp/scdrive-flutter-wrap/flutter <<'EOF'
           #!/usr/bin/env bash
@@ -41,7 +42,8 @@ jobs:
           fi
           if [[ "${1:-}" == "pub" && "${2:-}" == "get" ]]; then
             shift 2
-            exec "$REAL" pub get --offline "$@"
+            rm -f "${PUB_CACHE:-$HOME/.pub-cache}/credentials.json" "$HOME/.pub-cache/credentials.json" || true
+            exec "$REAL" pub get "$@"
           fi
           exec "$REAL" "$@"
           EOF
@@ -80,9 +82,11 @@ jobs:
           test -f android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleSpeedState.kt
           test -f lib/widgets/speed_debug_overlay.dart
 
-      - name: Resolve dependencies offline
+      - name: Resolve dependencies
         working-directory: scdrive-app
-        run: flutter pub get --offline
+        run: |
+          rm -f "$PUB_CACHE/credentials.json" "$HOME/.pub-cache/credentials.json" || true
+          flutter pub get
 
       - name: Strict Flutter analyze
         id: flutter_analyze
