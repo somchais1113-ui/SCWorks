@@ -78,11 +78,14 @@ jobs:
       - name: Build release candidate
         working-directory: scdrive-app
         env:
-          GOOGLE_MAPS_API_KEY: AIza00000000000000000000000000000000000
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
           SC_DRIVE_ALLOW_TEST_SIGNING: '1'
         run: |
           set -euxo pipefail
-          flutter build apk --release --dart-define=SC_DRIVE_BUILD_PROFILE=production
+          flutter build apk --release \
+            --dart-define=SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID:-}" \
+            --dart-define=SC_DRIVE_BUILD_PROFILE=production
 
       - name: Verify candidate
         shell: bash
@@ -121,7 +124,8 @@ jobs:
           Accel/brake gain automatic promotion: DISABLED / SHADOW-ONLY FOUNDATION
           Existing OBD hardware gate: PRESERVED
           CI contains placeholder Nissan Brand bytes only; production fonts are injected during finalization.
-          CI contains placeholder Maps configuration only; production deployment configuration is restored during finalization.
+          Google Maps deployment configuration: supplied from repository production secret during build.
+          Spotify Client ID: supplied from repository production secret during AOT build.
           Physical head-unit / road verification: REQUIRED.
           EOF
 
