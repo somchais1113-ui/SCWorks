@@ -1,0 +1,138 @@
+name: Build SC Drive v1.7.4 Realtime Vehicle Velocity Estimator
+
+on:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - '.github/workflows/sc-drive-v174-velocity-estimator.yml'
+      - 'build-assets/v174-velocity-estimator-s/**'
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+
+      - name: Reconstruct verified v1.7.3 base
+        shell: bash
+        run: |
+          set -euxo pipefail
+          run_v173_step() {
+            ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v173-full-obd-diagnostic.yml "$1" >/tmp/v173-step.sh
+            bash /tmp/v173-step.sh
+          }
+          run_v173_step 'Reconstruct verified v1.7.2 base'
+          run_v173_step 'Apply comprehensive diagnostic V3 overlay'
+          grep -n '^version: 1.7.3+23' scdrive-app/pubspec.yaml
+
+      - name: Apply realtime vehicle velocity estimator overlay
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat \
+            build-assets/v174-velocity-estimator-s/{00,01,02,03,04}.b64 \
+            build-assets/v174-velocity-estimator-s/{05a,05b,05c}.b64 \
+            build-assets/v174-velocity-estimator-s/{06,07,08}.b64 \
+            build-assets/v174-velocity-estimator-s/{09a,09b,09c}.b64 \
+            build-assets/v174-velocity-estimator-s/{10,11,12}.b64 \
+            > /tmp/v174.b64
+          echo '6205206653e7df5e938ff8e289374cf8c8b27d2c492e1ecb47e07d4cc1741d8d  /tmp/v174.b64' | sha256sum -c -
+          base64 -d /tmp/v174.b64 > /tmp/v174.tar.gz
+          echo '2bff567516f9d84f47853078460b07312604b60173b86e1e284f9d18410b5e8a  /tmp/v174.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/v174.tar.gz -C scdrive-app
+          cd scdrive-app
+          # Keep CI font placeholders from the v1.7.3 reconstruction. User-provided Nissan Brand binaries are injected locally only.
+          test -f assets/fonts/NissanBrand-Regular.otf
+          test -f assets/fonts/NissanBrand-Bold.otf
+          dart format lib/features/head_unit/drive_deck_panel.dart lib/features/head_unit/head_unit_screen.dart lib/services/drive_data_service.dart lib/services/drive_telemetry_service.dart lib/widgets/speed_debug_overlay.dart
+          grep -n '^version: 1.7.4+24' pubspec.yaml
+          grep -n 'class VehicleVelocityEstimator' android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleVelocityEstimator.kt
+          grep -n 'class GnssRateTracker' android/app/src/main/kotlin/com/scdeport/scdrive/speed/GnssRateTracker.kt
+          grep -n 'class VehicleTelemetryForegroundService' android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleTelemetryForegroundService.kt
+          grep -n 'FOREGROUND_SERVICE_LOCATION' android/app/src/main/AndroidManifest.xml
+          grep -n 'foregroundServiceType="location"' android/app/src/main/AndroidManifest.xml
+          grep -n 'desiredLocationIntervalMs = 150L' android/app/src/main/kotlin/com/scdeport/scdrive/speed/SpeedEngineConfig.kt
+          grep -n 'estimatorPeriodMs = 33L' android/app/src/main/kotlin/com/scdeport/scdrive/speed/SpeedEngineConfig.kt
+          grep -n '_speedKph = _displaySpeedKph' lib/services/drive_telemetry_service.dart
+          grep -n 'family: NissanBrand' pubspec.yaml
+
+      - name: Resolve dependencies
+        working-directory: scdrive-app
+        run: flutter pub get
+
+      - name: Apply safe Dart analyzer fixes
+        working-directory: scdrive-app
+        run: dart fix --apply
+
+      - name: Strict Flutter analyze
+        working-directory: scdrive-app
+        run: flutter analyze
+
+      - name: Build release candidate
+        working-directory: scdrive-app
+        env:
+          GOOGLE_MAPS_API_KEY: AIza00000000000000000000000000000000000
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: |
+          set -euxo pipefail
+          flutter build apk --release --dart-define=SC_DRIVE_BUILD_PROFILE=production
+
+      - name: Verify candidate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
+          unzip -l "$APK" | grep 'assets/flutter_assets/assets/fonts/NissanBrand-Regular.otf'
+          unzip -l "$APK" | grep 'assets/flutter_assets/assets/fonts/NissanBrand-Bold.otf'
+          grep -n '^version: 1.7.4+24' scdrive-app/pubspec.yaml
+          mkdir -p out/lib
+          cp "$APK" out/SC_Drive-v1.7.4-Realtime-Vehicle-Velocity-Estimator-CANDIDATE.apk
+          cp "$BT/apksigner" out/apksigner
+          cp "$BT/zipalign" out/zipalign
+          cp "$BT/lib/apksigner.jar" out/lib/apksigner.jar
+          chmod +x out/apksigner out/zipalign
+          sha256sum "$APK" > out/candidate.sha256
+          cat > out/BUILD-VERIFICATION.txt <<'EOF'
+          SC Drive v1.7.4+24 Realtime Vehicle Velocity Estimator
+          Flutter analyze: PASS
+          Release build: PASS
+          APK ZIP integrity: PASS
+          16 KB zipalign: PASS
+          Requested GNSS interval: 150 ms (request only; actual physical callback rate must be measured at runtime)
+          Raw GNSS measured-rate detector: ENABLED
+          GNSS + IMU timestamp-driven velocity estimator: ENABLED
+          Stationary / zero-velocity correction: ENABLED
+          GNSS dropout prediction and confidence decay: ENABLED
+          Smooth GNSS reacquisition correction: ENABLED
+          Velocity diagnostics and CSV logging: ENABLED
+          Persistent foreground vehicle telemetry service: ENABLED
+          OBD architecture: PRESERVED
+          OBD speed fusion: NOT ENABLED until PID 010D is verified with valid realtime samples
+          CI contains placeholder Nissan Brand bytes only; user-provided Nissan Brand fonts are injected locally before permanent signing.
+          CI contains placeholder Maps configuration only; production deployment configuration is injected locally before permanent signing.
+          Physical head-unit GNSS/IMU road verification: REQUIRED.
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.7.4-Realtime-Vehicle-Velocity-Estimator-CANDIDATE
+          path: out/**
+          if-no-files-found: error
+          retention-days: 7
