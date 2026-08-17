@@ -39,12 +39,10 @@ jobs:
           chmod +x /tmp/scdrive-flutter-wrap/flutter
           export SC_DRIVE_REAL_FLUTTER="$FLUTTER_ROOT/bin/flutter"
           export PATH="/tmp/scdrive-flutter-wrap:$PATH"
-          run_step() {
-            ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' "$1" "$2" >/tmp/step.sh
-            bash /tmp/step.sh
-          }
-          run_step .github/workflows/sc-drive-v181-openvehicle.yml 'Reconstruct verified v1.8.0 base'
-          run_step .github/workflows/sc-drive-v181-openvehicle.yml 'Apply v1.8.1 SC OpenVehicle overlay'
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v181-openvehicle.yml 'Reconstruct verified v1.8.0 base' >/tmp/v182-base-driver.sh
+          bash /tmp/v182-base-driver.sh
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v181-openvehicle.yml 'Apply v1.8.1 SC OpenVehicle overlay' >/tmp/v182-openvehicle-driver.sh
+          bash /tmp/v182-openvehicle-driver.sh
           cat build-assets/v181-polish-delta-s/00.b64 build-assets/v181-polish-delta-s/01p{0,1,2,3}.b64 build-assets/v181-polish-delta-s/02.b64 build-assets/v181-polish-delta-s/03.b64 > /tmp/v181-polish.b64
           base64 -d /tmp/v181-polish.b64 > /tmp/v181-polish.tar.gz
           tar -xzf /tmp/v181-polish.tar.gz -C scdrive-app
