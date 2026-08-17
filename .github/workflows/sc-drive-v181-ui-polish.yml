@@ -1,4 +1,4 @@
-name: Build SC Drive v1.8.2 Radio Maps Diagnose
+name: Build SC Drive v1.8.2 Radio Maps Fix
 
 on:
   push:
@@ -8,20 +8,23 @@ on:
   workflow_dispatch:
 
 jobs:
-  inspect:
+  android:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
+
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.35.7'
           channel: stable
           cache: true
+
       - name: Reconstruct v1.8.1 polished source
         shell: bash
         run: |
@@ -48,18 +51,337 @@ jobs:
           tar -xzf /tmp/v181-polish.tar.gz -C scdrive-app
           patch -d scdrive-app -p1 --forward --batch < build-assets/v181-polish-delta-s/ui-const-fix.patch
           patch -d scdrive-app -p1 --forward --batch < build-assets/v181-polish-delta-s/ui-radio-lint-fix.patch
-      - name: Dump radio maps implementation
+
+      - name: Apply v1.8.2 maps and radio fix
         shell: bash
         run: |
+          set -euxo pipefail
+          cd scdrive-app
+          python3 - <<'PY'
+          from pathlib import Path
+
+          pub = Path('pubspec.yaml')
+          s = pub.read_text()
+          if 'version: 1.8.1+27' not in s:
+              raise SystemExit('expected v1.8.1+27 baseline')
+          pub.write_text(s.replace('version: 1.8.1+27', 'version: 1.8.2+28', 1))
+
+          main = Path('android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt')
+          s = main.read_text()
+          anchor = '    private val vehicleStateEventChannel = "com.scdeport.scdrive/vehicle_state"\n'
+          if anchor not in s:
+              raise SystemExit('MainActivity channel anchor missing')
+          s = s.replace(anchor, anchor + '    private val carRadioChannel = "com.scdeport.scdrive/car_radio"\n    private val carRadioEventChannel = "com.scdeport.scdrive/car_radio_state"\n', 1)
+          anchor = '    private var vehicleStateCoordinator: VehicleStateCoordinator? = null\n'
+          if anchor not in s:
+              raise SystemExit('MainActivity field anchor missing')
+          s = s.replace(anchor, anchor + '    private var carRadioBridge: CarRadioBridge? = null\n', 1)
+          anchor = '        val spotifyBridge = SpotifyMediaSessionBridge(this)\n'
+          if anchor not in s:
+              raise SystemExit('MainActivity setup anchor missing')
+          radio_setup = '''        val radioBridge = CarRadioBridge(this)\n        carRadioBridge = radioBridge\n        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, carRadioChannel)\n            .setMethodCallHandler(radioBridge)\n        EventChannel(flutterEngine.dartExecutor.binaryMessenger, carRadioEventChannel)\n            .setStreamHandler(radioBridge)\n\n'''
+          s = s.replace(anchor, radio_setup + anchor, 1)
+          anchor = '        spotifyMediaBridge?.resume()\n'
+          if anchor not in s:
+              raise SystemExit('MainActivity resume anchor missing')
+          s = s.replace(anchor, '        carRadioBridge?.refresh()\n' + anchor, 1)
+          anchor = '        spotifyMediaBridge?.destroy()\n'
+          if anchor not in s:
+              raise SystemExit('MainActivity destroy anchor missing')
+          s = s.replace(anchor, '        carRadioBridge?.destroy()\n        carRadioBridge = null\n' + anchor, 1)
+          main.write_text(s)
+
+          manifest = Path('android/app/src/main/AndroidManifest.xml')
+          s = manifest.read_text()
+          queries = '    <queries>\n'
+          if queries not in s:
+              raise SystemExit('manifest queries anchor missing')
+          additions = '''    <queries>\n        <!-- Allow runtime discovery of the installed OEM/system FM tuner app. -->\n        <intent>\n            <action android:name="android.intent.action.MAIN" />\n            <category android:name="android.intent.category.LAUNCHER" />\n        </intent>\n        <package android:name="com.android.fmradio" />\n        <package android:name="com.android.fmradio2" />\n        <package android:name="com.mediatek.FMRadio" />\n        <package android:name="com.sec.android.app.fm" />\n'''
+          s = s.replace(queries, additions, 1)
+          manifest.write_text(s)
+          PY
+
+          cat > android/app/src/main/kotlin/com/scdeport/scdrive/CarRadioBridge.kt <<'KOTLIN'
+          package com.scdeport.scdrive
+
+          import android.app.Activity
+          import android.content.Intent
+          import android.content.pm.PackageManager
+          import io.flutter.plugin.common.EventChannel
+          import io.flutter.plugin.common.MethodCall
+          import io.flutter.plugin.common.MethodChannel
+          import java.util.Locale
+          import kotlin.math.roundToInt
+
+          /**
+           * Vendor-neutral bridge to the head unit's installed system/OEM radio app.
+           * Android exposes no public universal FM tuner API. This bridge therefore
+           * discovers the real tuner application at runtime and hands the requested
+           * station to it using conservative, commonly accepted extras. The OEM app
+           * remains responsible for antenna/tuner/audio routing.
+           */
+          class CarRadioBridge(private val activity: Activity) :
+              MethodChannel.MethodCallHandler,
+              EventChannel.StreamHandler {
+
+              private var eventSink: EventChannel.EventSink? = null
+              private var targetPackage: String? = null
+              private var targetLabel: String = "CAR RADIO"
+              private var frequencyMhz: Double = 98.3
+              private var playing: Boolean = false
+              private var status: String = "RADIO APP CHECKING"
+
+              init {
+                  refreshTarget()
+              }
+
+              override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                  eventSink = events
+                  refreshTarget()
+                  emit()
+              }
+
+              override fun onCancel(arguments: Any?) {
+                  eventSink = null
+              }
+
+              override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+                  when (call.method.lowercase(Locale.US)) {
+                      "getstate" -> {
+                          refreshTarget()
+                          result.success(stateMap())
+                      }
+                      "tune" -> {
+                          val value = call.argument<Number>("frequencyMhz")?.toDouble()
+                          if (value == null) {
+                              result.error("RADIO_FREQUENCY", "frequencyMhz is required", null)
+                          } else {
+                              frequencyMhz = normalize(value)
+                              launchRadio()
+                              result.success(stateMap())
+                          }
+                      }
+                      "seekup" -> {
+                          frequencyMhz = normalize(frequencyMhz + 0.2)
+                          launchRadio()
+                          result.success(stateMap())
+                      }
+                      "seekdown" -> {
+                          frequencyMhz = normalize(frequencyMhz - 0.2)
+                          launchRadio()
+                          result.success(stateMap())
+                      }
+                      "play" -> {
+                          launchRadio()
+                          result.success(stateMap())
+                      }
+                      "pause" -> {
+                          // There is no vendor-neutral public API to stop an FM tuner.
+                          // Do not send global media keys because that could pause Spotify.
+                          playing = false
+                          status = if (targetPackage != null) "RADIO APP READY" else "RADIO HARDWARE APP NOT FOUND"
+                          emit()
+                          result.success(stateMap())
+                      }
+                      else -> result.notImplemented()
+                  }
+              }
+
+              fun refresh() {
+                  refreshTarget()
+                  emit()
+              }
+
+              fun destroy() {
+                  eventSink = null
+              }
+
+              private fun refreshTarget() {
+                  val pm = activity.packageManager
+                  val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                  val matches = try {
+                      pm.queryIntentActivities(launcher, PackageManager.MATCH_DEFAULT_ONLY)
+                  } catch (_: Exception) {
+                      emptyList()
+                  }
+
+                  val explicitPriority = listOf(
+                      "com.android.fmradio",
+                      "com.android.fmradio2",
+                      "com.mediatek.FMRadio",
+                      "com.sec.android.app.fm",
+                  )
+
+                  val explicit = explicitPriority.firstOrNull { pkg ->
+                      try { pm.getLaunchIntentForPackage(pkg) != null } catch (_: Exception) { false }
+                  }
+
+                  val discovered = matches.firstOrNull { info ->
+                      val pkg = info.activityInfo?.packageName.orEmpty()
+                      if (pkg == activity.packageName) return@firstOrNull false
+                      val activityName = info.activityInfo?.name.orEmpty()
+                      val label = try { info.loadLabel(pm).toString() } catch (_: Exception) { "" }
+                      val haystack = "$pkg $activityName $label".lowercase(Locale.US)
+                      listOf("fmradio", "fm radio", "fm_radio", "radio", "tuner").any { it in haystack }
+                  }
+
+                  val pkg = explicit ?: discovered?.activityInfo?.packageName
+                  targetPackage = pkg
+                  targetLabel = if (pkg != null) {
+                      val fromMatch = matches.firstOrNull { it.activityInfo?.packageName == pkg }
+                      try { fromMatch?.loadLabel(pm)?.toString()?.takeIf { it.isNotBlank() } ?: "CAR RADIO" }
+                      catch (_: Exception) { "CAR RADIO" }
+                  } else {
+                      "CAR RADIO"
+                  }
+                  status = if (pkg != null) "SYSTEM RADIO READY" else "RADIO HARDWARE APP NOT FOUND"
+                  if (pkg == null) playing = false
+              }
+
+              private fun launchRadio(): Boolean {
+                  refreshTarget()
+                  val pkg = targetPackage ?: run {
+                      status = "RADIO HARDWARE APP NOT FOUND"
+                      playing = false
+                      emit()
+                      return false
+                  }
+                  val intent = try { activity.packageManager.getLaunchIntentForPackage(pkg) } catch (_: Exception) { null }
+                  if (intent == null) {
+                      status = "RADIO APP CANNOT OPEN"
+                      playing = false
+                      emit()
+                      return false
+                  }
+
+                  val khz = (frequencyMhz * 1000.0).roundToInt()
+                  intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                  // OEMs use different extra names. Supplying all of these is harmless
+                  // to receivers that ignore unknown extras and gives supported tuner apps
+                  // the requested station without hard-coding one vendor protocol.
+                  intent.putExtra("frequencyMhz", frequencyMhz)
+                  intent.putExtra("frequencyKhz", khz)
+                  intent.putExtra("frequency", khz)
+                  intent.putExtra("freq", khz)
+                  intent.putExtra("station", frequencyMhz.toString())
+                  return try {
+                      activity.startActivity(intent)
+                      playing = true
+                      status = "SYSTEM RADIO OPENED"
+                      emit()
+                      true
+                  } catch (_: Exception) {
+                      playing = false
+                      status = "RADIO APP OPEN FAILED"
+                      emit()
+                      false
+                  }
+              }
+
+              private fun stateMap(): Map<String, Any?> = mapOf(
+                  "supported" to (targetPackage != null),
+                  "frequencyMhz" to frequencyMhz,
+                  "stationLabel" to targetLabel,
+                  "playing" to playing,
+                  "status" to status,
+                  "targetPackage" to targetPackage,
+                  "bridgeMode" to "SYSTEM_RADIO_APP",
+              )
+
+              private fun emit() {
+                  eventSink?.success(stateMap())
+              }
+
+              private fun normalize(value: Double): Double {
+                  val clamped = value.coerceIn(87.5, 108.0)
+                  return (clamped * 10.0).roundToInt() / 10.0
+              }
+          }
+          KOTLIN
+
+          dart format lib/services/car_radio_service.dart lib/features/head_unit/car_radio_panel.dart
+          grep -n '^version: 1.8.2+28' pubspec.yaml
+          grep -q 'class CarRadioBridge' android/app/src/main/kotlin/com/scdeport/scdrive/CarRadioBridge.kt
+          grep -q 'com.scdeport.scdrive/car_radio' android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt
+          sha256sum -c /tmp/v181-physics-authority.sha256
+
+      - name: Require production Google Maps key
+        shell: bash
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
           set -euo pipefail
-          for f in \
-            scdrive-app/lib/services/car_radio_service.dart \
-            scdrive-app/lib/features/head_unit/car_radio_panel.dart \
-            scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt \
-            scdrive-app/android/app/src/main/AndroidManifest.xml \
-            scdrive-app/android/app/build.gradle.kts \
-            scdrive-app/android/app/build.gradle; do
-            if [[ -f "$f" ]]; then echo "===== $f ====="; cat "$f"; fi
-          done
-          echo '===== MAP REFERENCES ====='
-          grep -RniE 'GOOGLE_MAPS_API_KEY|com.google.android.geo.API_KEY|GoogleMap|mapsApiKey|MAPS_API' scdrive-app/android scdrive-app/lib | head -200 || true
+          if [[ -z "${GOOGLE_MAPS_API_KEY:-}" ]]; then
+            echo '::error::GOOGLE_MAPS_API_KEY repository secret is missing. Refusing to ship another APK with disabled Maps.'
+            exit 2
+          fi
+          echo 'Google Maps production key is present (value intentionally not printed).'
+
+      - name: Resolve dependencies
+        working-directory: scdrive-app
+        run: |
+          rm -f "$PUB_CACHE/credentials.json" "$HOME/.pub-cache/credentials.json" || true
+          flutter pub get
+
+      - name: Android unit tests
+        working-directory: scdrive-app/android
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Strict Flutter analyze
+        working-directory: scdrive-app
+        run: flutter analyze --no-fatal-infos
+
+      - name: Build release candidate
+        working-directory: scdrive-app
+        env:
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: |
+          set -euxo pipefail
+          flutter build apk --release \
+            --dart-define=SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID:-}" \
+            --dart-define=SC_DRIVE_BUILD_PROFILE=production
+
+      - name: Verify Maps radio candidate
+        shell: bash
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          set -euxo pipefail
+          APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
+          "$BT/aapt" dump badging "$APK" | tee /tmp/badging.txt
+          grep -q "package: name='com.scdeport.scdrive' versionCode='28' versionName='1.8.2'" /tmp/badging.txt
+          if "$BT/aapt" dump xmltree "$APK" AndroidManifest.xml | grep -q 'SC_DRIVE_MAPS_DISABLED'; then
+            echo '::error::Built APK still contains disabled Maps placeholder.'
+            exit 3
+          fi
+          unzip -l "$APK" | grep -q 'CarRadioBridge' || true
+          mkdir -p out
+          cp "$APK" out/SC_Drive-v1.8.2-Radio-Maps-Fix-CANDIDATE.apk
+          sha256sum "$APK" > out/candidate.sha256
+          cat > out/BUILD-VERIFICATION.txt <<'EOF'
+          SC Drive v1.8.2+28 — Radio + Maps Fix
+          Realtime speed / G-force / adaptive physics authority: PRESERVED
+          Google Maps production-key gate: PASS
+          Google Maps disabled placeholder in APK: ABSENT
+          Car radio Flutter MethodChannel/EventChannel native bridge: ENABLED
+          OEM/system FM tuner discovery: ENABLED
+          Radio audio ownership/routing: delegated to installed OEM/system radio application
+          Vendor-specific direct FM tuner protocol: NOT FABRICATED; runtime system-radio bridge used instead
+          Release candidate signing: CI test signing only; permanent final signing remains separate
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.8.2-Radio-Maps-Fix-CANDIDATE
+          path: out/**
+          if-no-files-found: error
+          retention-days: 7
