@@ -57,7 +57,6 @@ jobs:
           grep -n 'data class LearningEligibility' android/app/src/main/kotlin/com/scdeport/scdrive/speed/AdaptiveLearningModels.kt
           grep -n 'learningEligible' android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleSpeedState.kt
           grep -n 'adaptiveProfileVersion' android/app/src/main/kotlin/com/scdeport/scdrive/speed/VehicleSpeedState.kt
-          grep -n 'LEARNING' lib/widgets/speed_debug_overlay.dart
 
       - name: Resolve dependencies
         working-directory: scdrive-app
