@@ -42,7 +42,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          cat build-assets/v180-adaptive-s/{00,01,02,03,04,05,06}.b64 > /tmp/v180.b64
+          cat build-assets/v180-adaptive-s/{00,01p0,01p1,01p2,01p3,01p4,02,03p0,03p1,03p2,03p3,03p4,04,05,06}.b64 > /tmp/v180.b64
           echo '8b08718a05cf4dbb3909c8c8e8ff02956cace3bc73d66c1cee081de41d170b77  /tmp/v180.b64' | sha256sum -c -
           base64 -d /tmp/v180.b64 > /tmp/v180.tar.gz
           echo 'd650edef8928a6456b9e73c445d90a76997350b23223a14d0e798828eced4d89  /tmp/v180.tar.gz' | sha256sum -c -
@@ -103,8 +103,11 @@ jobs:
           cp "$APK" out/SC_Drive-v1.8.0-Adaptive-Foundation-CANDIDATE.apk
           cp "$BT/apksigner" out/apksigner
           cp "$BT/zipalign" out/zipalign
+          cp "$BT/aapt" out/aapt
           cp "$BT/lib/apksigner.jar" out/lib/apksigner.jar
-          chmod +x out/apksigner out/zipalign
+          chmod +x out/apksigner out/zipalign out/aapt
+          "$BT/aapt" dump badging "$APK" | tee out/badging.txt
+          grep -q "package: name='com.scdeport.scdrive' versionCode='26' versionName='1.8.0'" out/badging.txt
           sha256sum "$APK" > out/candidate.sha256
           cat > out/BUILD-VERIFICATION.txt <<'EOF'
           SC Drive v1.8.0+26 Adaptive Foundation
