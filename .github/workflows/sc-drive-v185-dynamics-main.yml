@@ -1,0 +1,187 @@
+name: Build SC Drive v1.8.5 Drive Dynamics
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/sc-drive-v185-dynamics-main.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: sc-drive-apk-build
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+
+      - name: Reconstruct exact v1.8.2 source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android-final"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v182-final-sign.yml 'Reconstruct exact v1.8.2 source' >/tmp/base.sh
+          bash /tmp/base.sh
+          grep -n '^version: 1.8.2+28' scdrive-app/pubspec.yaml
+          (cd scdrive-app && sha256sum -c /tmp/v181-physics-authority.sha256)
+
+      - name: Apply Camera Awareness and v1.8.4 hardening
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p scdrive-app/lib/features/camera
+          cp build-assets/v183-camera/camera_models.dart scdrive-app/lib/features/camera/camera_models.dart
+          cp build-assets/v183-camera/camera_repository.dart scdrive-app/lib/features/camera/camera_repository.dart
+          cp build-assets/v183-camera/camera_awareness_service.dart scdrive-app/lib/features/camera/camera_awareness_service.dart
+          patch -d scdrive-app -p1 --forward --batch < build-assets/v183-camera/drive-deck-camera.patch
+          test -z "$(find scdrive-app -name '*.rej' -print -quit)"
+          python3 - <<'PY'
+          from pathlib import Path
+          repo=Path('scdrive-app/lib/features/camera/camera_repository.dart')
+          s=repo.read_text()
+          old='if (_records.isEmpty || centerLat == null || centerLon == null || synced == null) {'
+          new='if (centerLat == null || centerLon == null || synced == null) {'
+          if old not in s: raise SystemExit('camera refresh gate not found')
+          s=s.replace(old,new,1)
+          needle='  node["enforcement"="maxspeed"](around:${_syncRadiusMeters.round()},$latitude,$longitude);\n'
+          if needle not in s: raise SystemExit('camera query anchor not found')
+          s=s.replace(needle,needle+'  node["enforcement"="traffic_signals"](around:${_syncRadiusMeters.round()},$latitude,$longitude);\n',1)
+          repo.write_text(s)
+          svc=Path('scdrive-app/lib/features/camera/camera_awareness_service.dart')
+          s=svc.read_text()
+          if 'const Duration(seconds: 30)' not in s: raise SystemExit('camera retry interval not found')
+          svc.write_text(s.replace('const Duration(seconds: 30)','const Duration(minutes: 2)',1))
+          PY
+
+      - name: Add Drive Data page 3 realtime dynamics
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cp build-assets/v185-dynamics/drive_dynamics_panel.dart scdrive-app/lib/features/head_unit/drive_dynamics_panel.dart
+          python3 - <<'PY'
+          from pathlib import Path
+          panel=Path('scdrive-app/lib/features/head_unit/drive_dynamics_panel.dart')
+          s=panel.read_text()
+          s=s.replace('builder: (context, constraints) {','builder: (context, _) {',1)
+          s=s.replace('maxAbs = (maxAbs * 1.18).clamp(0.6, 1.5);','maxAbs = (maxAbs * 1.18).clamp(0.6, 1.5).toDouble();',1)
+          s=s.replace("final alpha = (50 + ageFraction * 155).round().clamp(40, 220);","final alpha = (50 + ageFraction * 155).round().clamp(40, 220).toInt();",1)
+          panel.write_text(s)
+
+          deck=Path('scdrive-app/lib/features/head_unit/drive_deck_panel.dart')
+          s=deck.read_text()
+          anchor="import 'package:google_maps_flutter/google_maps_flutter.dart';\n"
+          if anchor not in s: raise SystemExit('drive deck import anchor not found')
+          s=s.replace(anchor,anchor+"\nimport 'drive_dynamics_panel.dart';\n",1)
+          old="""            children: <Widget>[\n              _mapPage(),\n              _drivePage(),\n            ],"""
+          new="""            children: <Widget>[\n              _mapPage(),\n              _drivePage(),\n              DriveDynamicsPanel(\n                telemetry: widget.telemetry,\n                compact: widget.compact,\n              ),\n            ],"""
+          if old not in s: raise SystemExit('drive deck PageView children anchor not found')
+          s=s.replace(old,new,1)
+          dots="""                  Row(\n                    children: List<Widget>.generate(\n                      2,"""
+          if dots not in s: raise SystemExit('drive deck page indicator anchor not found')
+          s=s.replace(dots,"""                  Row(\n                    children: List<Widget>.generate(\n                      3,""",1)
+          marker="""                    'DRIVE DATA',\n                    style: TextStyle(\n                      color: _page == 1"""
+          if marker not in s: raise SystemExit('DRIVE DATA header anchor not found')
+          s=s.replace(marker,"""                    'DRIVE DATA',\n                    style: TextStyle(\n                      color: _page >= 1""",1)
+          deck.write_text(s)
+
+          pub=Path('scdrive-app/pubspec.yaml')
+          s=pub.read_text()
+          if 'version: 1.8.2+28' not in s: raise SystemExit('version baseline not found')
+          pub.write_text(s.replace('version: 1.8.2+28','version: 1.8.5+31',1))
+          PY
+          dart format \
+            scdrive-app/lib/features/head_unit/drive_dynamics_panel.dart \
+            scdrive-app/lib/features/head_unit/drive_deck_panel.dart \
+            scdrive-app/lib/features/camera/camera_repository.dart \
+            scdrive-app/lib/features/camera/camera_awareness_service.dart
+          grep -q 'DriveDynamicsPanel' scdrive-app/lib/features/head_unit/drive_deck_panel.dart
+          grep -q 'LONGITUDINAL G' scdrive-app/lib/features/head_unit/drive_dynamics_panel.dart
+          grep -q 'G-G DIAGRAM' scdrive-app/lib/features/head_unit/drive_dynamics_panel.dart
+          grep -q 'SPEED TRACE' scdrive-app/lib/features/head_unit/drive_dynamics_panel.dart
+          grep -n '^version: 1.8.5+31' scdrive-app/pubspec.yaml
+          grep -q '_digitalSpeed >= 100' scdrive-app/lib/features/head_unit/head_unit_screen.dart
+          grep -q 'fit: BoxFit.scaleDown' scdrive-app/lib/features/head_unit/head_unit_screen.dart
+          (cd scdrive-app && sha256sum -c /tmp/v181-physics-authority.sha256)
+
+      - name: Require production Maps secret
+        shell: bash
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${GOOGLE_MAPS_API_KEY:-}"
+          echo 'Production Google Maps key present.'
+
+      - name: Resolve dependencies
+        working-directory: scdrive-app
+        run: |
+          rm -f "$PUB_CACHE/credentials.json" "$HOME/.pub-cache/credentials.json" || true
+          flutter pub get
+
+      - name: Android unit tests
+        working-directory: scdrive-app/android
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Strict Flutter analyze
+        working-directory: scdrive-app
+        run: flutter analyze --no-fatal-infos
+
+      - name: Build release candidate with production Maps
+        working-directory: scdrive-app
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: |
+          set -euxo pipefail
+          flutter build apk --release \
+            --dart-define=SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID:-}" \
+            --dart-define=SC_DRIVE_BUILD_PROFILE=production
+
+      - name: Verify and package candidate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
+          mkdir -p out/build-tools/lib
+          cp "$APK" out/SC_Drive-v1.8.5-Drive-Dynamics-CANDIDATE.apk
+          cp "$BT/zipalign" out/build-tools/zipalign
+          cp "$BT/apksigner" out/build-tools/apksigner
+          cp "$BT/lib/apksigner.jar" out/build-tools/lib/apksigner.jar
+          cp "$BT/aapt" out/build-tools/aapt
+          chmod +x out/build-tools/zipalign out/build-tools/apksigner out/build-tools/aapt
+          unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'G-G DIAGRAM'
+          unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'LONGITUDINAL G'
+          unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'CAMERA AHEAD'
+          unzip -p "$APK" classes.dex | strings | grep -F -m1 'SYSTEM_RADIO_APP'
+          "$BT/aapt" dump badging "$APK" | tee out/AAPT-BADGING.txt
+          grep -q "package: name='com.scdeport.scdrive'" out/AAPT-BADGING.txt
+          grep -q "versionCode='31'" out/AAPT-BADGING.txt
+          grep -q "versionName='1.8.5'" out/AAPT-BADGING.txt
+          sha256sum out/SC_Drive-v1.8.5-Drive-Dynamics-CANDIDATE.apk > out/CANDIDATE.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.8.5-Drive-Dynamics-CANDIDATE
+          path: out/**
+          if-no-files-found: error
+          retention-days: 14
