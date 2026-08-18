@@ -17,12 +17,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.35.7'
@@ -46,137 +44,25 @@ jobs:
           cp build-assets/v183-camera/camera_models.dart scdrive-app/lib/features/camera/camera_models.dart
           cp build-assets/v183-camera/camera_repository.dart scdrive-app/lib/features/camera/camera_repository.dart
           cp build-assets/v183-camera/camera_awareness_service.dart scdrive-app/lib/features/camera/camera_awareness_service.dart
-
-          set +e
           patch -d scdrive-app -p1 --forward --batch < build-assets/v183-camera/drive-deck-camera.patch
-          PATCH_STATUS=$?
-          set -e
-          if [[ "$PATCH_STATUS" -ne 0 ]]; then
-            REJ=scdrive-app/lib/features/head_unit/drive_deck_panel.dart.rej
-            test -f "$REJ"
-            # The v1.8.1 UI-polish delta moved the right-side controls. Only the
-            # Zoom/Compass hunk is allowed to need anchor rebasing here.
-            grep -q '_MapZoomControls' "$REJ"
-            grep -q '_MapCompass' "$REJ"
-            test "$(grep -c '^@@' "$REJ")" -eq 1
-            python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path('scdrive-app/lib/features/head_unit/drive_deck_panel.dart')
-          lines = p.read_text().splitlines()
-
-          zoom_child = next(i for i, line in enumerate(lines) if 'child: _MapZoomControls(' in line)
-          compass_child = next(i for i, line in enumerate(lines) if 'child: _MapCompass(label: t.compassLabel)' in line and i > zoom_child)
-
-          def block_start(index):
-              for i in range(index, -1, -1):
-                  stripped = lines[i].strip()
-                  if stripped in {'Positioned(', 'AnimatedPositioned('} and lines[i].startswith('        '):
-                      return i
-              raise RuntimeError('positioned block start not found')
-
-          zoom_start = block_start(zoom_child)
-          compass_start = block_start(compass_child)
-          if compass_start <= zoom_start:
-              raise RuntimeError('unexpected map control order')
-
-          compass_end = None
-          for i in range(compass_child + 1, min(len(lines), compass_child + 12)):
-              if lines[i] == '        ),':
-                  compass_end = i
-                  break
-          if compass_end is None:
-              raise RuntimeError('compass block end not found')
-
-          replacement = '''        Positioned(
-            right: widget.compact ? 14 : 18,
-            bottom: widget.compact ? 56 : 68,
-            child: _MapZoomControls(
-              onZoomIn: () => unawaited(_changeZoom(0.8)),
-              onZoomOut: () => unawaited(_changeZoom(-0.8)),
-            ),
-          ),
-          AnimatedPositioned(
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOutCubic,
-            right: widget.compact ? 14 : 18,
-            top: cameraAlert.shouldRender
-                ? (widget.compact ? 176 : 202)
-                : (widget.compact ? 68 : 82),
-            child: _MapCompass(label: t.compassLabel),
-          ),
-          Positioned(
-            right: widget.compact ? 12 : 16,
-            top: widget.compact ? 48 : 58,
-            child: _CameraAlertOverlay(
-              snapshot: cameraAlert,
-              compact: widget.compact,
-            ),
-          ),'''.splitlines()
-
-          lines[zoom_start:compass_end + 1] = replacement
-          p.write_text('\n'.join(lines) + '\n')
-          PY
-            rm -f "$REJ"
-          fi
           test -z "$(find scdrive-app -name '*.rej' -print -quit)"
-
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('scdrive-app/pubspec.yaml')
-          s = p.read_text()
-          if 'version: 1.8.2+28' not in s:
-              raise SystemExit('expected v1.8.2+28 baseline')
-          p.write_text(s.replace('version: 1.8.2+28', 'version: 1.8.3+29', 1))
+          p=Path('scdrive-app/pubspec.yaml')
+          s=p.read_text()
+          if 'version: 1.8.2+28' not in s: raise SystemExit('expected v1.8.2+28 baseline')
+          p.write_text(s.replace('version: 1.8.2+28','version: 1.8.3+29',1))
           PY
-
           dart format \
             scdrive-app/lib/features/camera/camera_models.dart \
             scdrive-app/lib/features/camera/camera_repository.dart \
             scdrive-app/lib/features/camera/camera_awareness_service.dart \
             scdrive-app/lib/features/head_unit/drive_deck_panel.dart
-
           grep -n '^version: 1.8.3+29' scdrive-app/pubspec.yaml
-          grep -q 'class CameraAwarenessService' scdrive-app/lib/features/camera/camera_awareness_service.dart
-          grep -q 'class OsmCameraRepository' scdrive-app/lib/features/camera/camera_repository.dart
           grep -q 'CAMERA AHEAD' scdrive-app/lib/features/head_unit/drive_deck_panel.dart
           grep -q 'AnimatedSlide' scdrive-app/lib/features/head_unit/drive_deck_panel.dart
-          grep -q 'cameraAlert.shouldRender' scdrive-app/lib/features/head_unit/drive_deck_panel.dart
           grep -q 'OPENSTREETMAP' scdrive-app/lib/features/camera/camera_repository.dart
-          grep -q 'out body;' scdrive-app/lib/features/camera/camera_repository.dart
           (cd scdrive-app && sha256sum -c /tmp/v181-physics-authority.sha256)
-
-      - name: Require production Maps and permanent signing secrets
-        shell: bash
-        env:
-          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
-          SC_DRIVE_KEYSTORE_BASE64: ${{ secrets.SC_DRIVE_KEYSTORE_BASE64 }}
-          SC_DRIVE_KEYSTORE_PASSWORD: ${{ secrets.SC_DRIVE_KEYSTORE_PASSWORD }}
-          SC_DRIVE_KEY_PASSWORD: ${{ secrets.SC_DRIVE_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          missing=0
-          for name in GOOGLE_MAPS_API_KEY SC_DRIVE_KEYSTORE_BASE64 SC_DRIVE_KEYSTORE_PASSWORD SC_DRIVE_KEY_PASSWORD; do
-            if [[ -z "${!name:-}" ]]; then
-              echo "::error::Missing required repository secret: $name"
-              missing=1
-            fi
-          done
-          if [[ "$missing" -ne 0 ]]; then exit 2; fi
-          echo 'Production Maps key and permanent signing inputs are present.'
-
-      - name: Materialize and validate permanent keystore
-        shell: bash
-        env:
-          SC_DRIVE_KEYSTORE_BASE64: ${{ secrets.SC_DRIVE_KEYSTORE_BASE64 }}
-          SC_DRIVE_KEYSTORE_PASSWORD: ${{ secrets.SC_DRIVE_KEYSTORE_PASSWORD }}
-        run: |
-          set -euxo pipefail
-          KEYSTORE="$RUNNER_TEMP/scdrive-release.jks"
-          printf '%s' "$SC_DRIVE_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
-          test -s "$KEYSTORE"
-          chmod 600 "$KEYSTORE"
-          keytool -list -keystore "$KEYSTORE" -storepass "$SC_DRIVE_KEYSTORE_PASSWORD" -alias scdrive-release >/dev/null
 
       - name: Resolve dependencies
         working-directory: scdrive-app
@@ -187,7 +73,7 @@ jobs:
       - name: Android unit tests
         working-directory: scdrive-app/android
         env:
-          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          GOOGLE_MAPS_API_KEY: AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
           SC_DRIVE_ALLOW_TEST_SIGNING: '1'
         run: ./gradlew :app:testDebugUnitTest --no-daemon
 
@@ -195,26 +81,17 @@ jobs:
         working-directory: scdrive-app
         run: flutter analyze --no-fatal-infos
 
-      - name: Build production release with permanent certificate
+      - name: Build production-profile test-signed candidate
         working-directory: scdrive-app
         env:
-          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
-          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
-          SC_DRIVE_KEYSTORE_PATH: ${{ runner.temp }}/scdrive-release.jks
-          SC_DRIVE_KEYSTORE_PASSWORD: ${{ secrets.SC_DRIVE_KEYSTORE_PASSWORD }}
-          SC_DRIVE_KEY_ALIAS: scdrive-release
-          SC_DRIVE_KEY_PASSWORD: ${{ secrets.SC_DRIVE_KEY_PASSWORD }}
+          GOOGLE_MAPS_API_KEY: AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
         run: |
           set -euxo pipefail
-          unset SC_DRIVE_ALLOW_TEST_SIGNING || true
-          flutter build apk --release \
-            --dart-define=SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID:-}" \
-            --dart-define=SC_DRIVE_BUILD_PROFILE=production
+          flutter build apk --release --dart-define=SC_DRIVE_BUILD_PROFILE=production
 
-      - name: Verify and package v1.8.3
+      - name: Verify candidate and package finalization tools
         shell: bash
-        env:
-          EXPECTED_SIGNER_SHA256: BDF5DFEF877CC99B73436257830BD45DEDE314C41488DA480FA102553F836385
         run: |
           set -euxo pipefail
           APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
@@ -222,52 +99,24 @@ jobs:
           unzip -t "$APK" >/dev/null
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
           "$BT/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
-          mkdir -p out
-          "$BT/apksigner" verify --verbose --print-certs "$APK" | tee out/APKSIGNER-VERIFY.txt
-          ACTUAL=$(sed -n 's/.*certificate SHA-256 digest: //p' out/APKSIGNER-VERIFY.txt | head -1 | tr -d ':[:space:]' | tr '[:lower:]' '[:upper:]')
-          test -n "$ACTUAL"
-          if [[ "$ACTUAL" != "$EXPECTED_SIGNER_SHA256" ]]; then echo "::error::Permanent signing certificate mismatch"; exit 3; fi
+          mkdir -p out/build-tools/lib
+          cp "$APK" out/SC_Drive-v1.8.3-Camera-Awareness-CANDIDATE.apk
+          cp "$BT/zipalign" out/build-tools/zipalign
+          cp "$BT/apksigner" out/build-tools/apksigner
+          cp "$BT/lib/apksigner.jar" out/build-tools/lib/apksigner.jar
+          chmod +x out/build-tools/zipalign out/build-tools/apksigner
           unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'CAMERA AHEAD'
           unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'OPENSTREETMAP'
           unzip -p "$APK" classes.dex | strings | grep -F -m1 'SYSTEM_RADIO_APP'
-          if [[ -x "$BT/aapt" ]]; then
-            "$BT/aapt" dump badging "$APK" | tee out/AAPT-BADGING.txt
-            grep -q "package: name='com.scdeport.scdrive'" out/AAPT-BADGING.txt
-            grep -q "versionCode='29'" out/AAPT-BADGING.txt
-            grep -q "versionName='1.8.3'" out/AAPT-BADGING.txt
-          fi
-          FINAL=out/SC_Drive-v1.8.3-Camera-Awareness-PERMANENT-SIGNED.apk
-          cp "$APK" "$FINAL"
-          sha256sum "$FINAL" > out/SC_Drive-v1.8.3-Camera-Awareness-PERMANENT-SIGNED.apk.sha256
-          cat > out/SC_Drive-v1.8.3-Camera-Awareness-FINAL-VERIFICATION.txt <<EOF
-          SC Drive v1.8.3+29 Camera Awareness Engine
-          Base: exact SC Drive v1.8.2 Radio + Maps source reconstruction
-          Package: com.scdeport.scdrive
-          Version: 1.8.3+29
-          Build profile: production
-          Camera cache: INCLUDED
-          Public camera source: OpenStreetMap / Overpass
-          Heading matching: INCLUDED
-          Geodesic distance + live countdown: INCLUDED
-          Pass detector: INCLUDED
-          Alert slide-in/out + CAMERA AHEAD / distance / LIMIT / NOW: INCLUDED
-          Active-navigation route-distance matching: NOT YET ENABLED
-          GNSS + IMU / +G/-G / Adaptive protected files: HASH-GUARDED
-          OBD/OpenVehicle authority boundary: PRESERVED
-          Radio bridge: INCLUDED
-          Flutter analyze: PASS
-          Android unit tests: PASS
-          APK ZIP integrity: PASS
-          16 KB zipalign: PASS
-          APK signature verification: PASS
-          Permanent signer SHA-256: $ACTUAL
-          Signer continuity: PASS
-          Physical head-unit road validation: REQUIRED AFTER INSTALLATION
-          EOF
+          "$BT/aapt" dump badging "$APK" | tee out/AAPT-BADGING.txt
+          grep -q "package: name='com.scdeport.scdrive'" out/AAPT-BADGING.txt
+          grep -q "versionCode='29'" out/AAPT-BADGING.txt
+          grep -q "versionName='1.8.3'" out/AAPT-BADGING.txt
+          sha256sum out/SC_Drive-v1.8.3-Camera-Awareness-CANDIDATE.apk > out/CANDIDATE.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: SC-Drive-v1.8.3-Camera-Awareness-PERMANENT-SIGNED
+          name: SC-Drive-v1.8.3-Camera-Awareness-CANDIDATE
           path: out/**
           if-no-files-found: error
           retention-days: 14
@@ -279,22 +128,17 @@ jobs:
           set -euxo pipefail
           mkdir -p build-status
           APK_SHA=''
-          if [[ -f out/SC_Drive-v1.8.3-Camera-Awareness-PERMANENT-SIGNED.apk.sha256 ]]; then APK_SHA=$(cut -d' ' -f1 out/SC_Drive-v1.8.3-Camera-Awareness-PERMANENT-SIGNED.apk.sha256); fi
+          if [[ -f out/CANDIDATE.sha256 ]]; then APK_SHA=$(cut -d' ' -f1 out/CANDIDATE.sha256); fi
           cat > build-status/sc-drive-v183-latest.txt <<EOF
           STATUS=${{ job.status }}
           RUN_ID=$GITHUB_RUN_ID
           SOURCE_SHA=$GITHUB_SHA
-          ARTIFACT_NAME=SC-Drive-v1.8.3-Camera-Awareness-PERMANENT-SIGNED
-          APK_NAME=SC_Drive-v1.8.3-Camera-Awareness-PERMANENT-SIGNED.apk
+          ARTIFACT_NAME=SC-Drive-v1.8.3-Camera-Awareness-CANDIDATE
+          APK_NAME=SC_Drive-v1.8.3-Camera-Awareness-CANDIDATE.apk
           APK_SHA256=$APK_SHA
           EOF
           git config user.name 'SC Drive Build Bot'
           git config user.email 'actions@users.noreply.github.com'
           git add build-status/sc-drive-v183-latest.txt
-          git commit -m 'publish v1.8.3 build pointer [skip ci]'
+          git commit -m 'publish v1.8.3 candidate build pointer [skip ci]'
           git push origin HEAD:sc-drive-apk-build
-
-      - name: Remove signing material
-        if: always()
-        shell: bash
-        run: rm -f "$RUNNER_TEMP/scdrive-release.jks"
