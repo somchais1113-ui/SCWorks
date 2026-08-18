@@ -1,0 +1,70 @@
+name: Inspect SC Drive v1.8.5 Drive Data Structure
+
+on:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - '.github/workflows/sc-drive-v185-drive-data-inspect.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+      - name: Reconstruct v1.8.4 source-equivalent
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android-final"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v182-final-sign.yml 'Reconstruct exact v1.8.2 source' >/tmp/base.sh
+          bash /tmp/base.sh
+          mkdir -p scdrive-app/lib/features/camera
+          cp build-assets/v183-camera/camera_models.dart scdrive-app/lib/features/camera/camera_models.dart
+          cp build-assets/v183-camera/camera_repository.dart scdrive-app/lib/features/camera/camera_repository.dart
+          cp build-assets/v183-camera/camera_awareness_service.dart scdrive-app/lib/features/camera/camera_awareness_service.dart
+          patch -d scdrive-app -p1 --forward --batch < build-assets/v183-camera/drive-deck-camera.patch
+          python3 - <<'PY'
+          from pathlib import Path
+          pub=Path('scdrive-app/pubspec.yaml'); s=pub.read_text(); pub.write_text(s.replace('version: 1.8.2+28','version: 1.8.4+30',1))
+          repo=Path('scdrive-app/lib/features/camera/camera_repository.dart'); s=repo.read_text(); s=s.replace('if (_records.isEmpty || centerLat == null || centerLon == null || synced == null) {','if (centerLat == null || centerLon == null || synced == null) {',1); needle='  node["enforcement"="maxspeed"](around:${_syncRadiusMeters.round()},$latitude,$longitude);\n'; s=s.replace(needle,needle+'  node["enforcement"="traffic_signals"](around:${_syncRadiusMeters.round()},$latitude,$longitude);\n',1); repo.write_text(s)
+          svc=Path('scdrive-app/lib/features/camera/camera_awareness_service.dart'); s=svc.read_text(); svc.write_text(s.replace('const Duration(seconds: 30)','const Duration(minutes: 2)',1))
+          PY
+      - name: Publish drive data source inspection
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p build-status
+          OUT=build-status/sc-drive-v185-drive-data-inspection.txt
+          {
+            echo '=== HEAD UNIT SCREEN: DRIVE/PAGE/NAV TERMS ==='
+            grep -n -E -B20 -A80 'DRIVE DATA|Drive Data|drive data|PageView|PageController|TabBar|NavigationRail|BottomNavigationBar|_selected|selectedIndex|currentIndex|DriveData|driveData' scdrive-app/lib/features/head_unit/head_unit_screen.dart || true
+            echo '=== DRIVE DECK PANEL: DRIVE/PAGE/NAV TERMS ==='
+            grep -n -E -B20 -A80 'DRIVE DATA|Drive Data|drive data|PageView|PageController|TabBar|NavigationRail|BottomNavigationBar|_selected|selectedIndex|currentIndex|DriveData|driveData' scdrive-app/lib/features/head_unit/drive_deck_panel.dart || true
+            echo '=== HEAD UNIT CLASSES ==='
+            grep -n '^class _' scdrive-app/lib/features/head_unit/head_unit_screen.dart || true
+            echo '=== DRIVE DECK CLASSES ==='
+            grep -n '^class _' scdrive-app/lib/features/head_unit/drive_deck_panel.dart || true
+            echo '=== DRIVE DATA SERVICE PUBLIC GETTERS ==='
+            grep -n -E '^[[:space:]]*(double|int|String|bool|List<|Map<|DateTime|Duration).* get |class DriveDataService|ChangeNotifier' scdrive-app/lib/services/drive_data_service.dart || true
+            echo '=== TELEMETRY PUBLIC GETTERS ==='
+            grep -n -E '^[[:space:]]*(double|int|String|bool).* get ' scdrive-app/lib/services/drive_telemetry_service.dart || true
+          } > "$OUT"
+          git config user.name 'SC Drive Build Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add "$OUT"
+          git commit -m 'publish v1.8.5 drive data source inspection [skip ci]' || true
+          git pull --rebase origin sc-drive-apk-build || true
+          git push origin HEAD:sc-drive-apk-build || true
