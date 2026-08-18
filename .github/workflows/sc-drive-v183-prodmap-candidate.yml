@@ -50,28 +50,41 @@ jobs:
           set -euxo pipefail
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           repo = Path('scdrive-app/lib/features/camera/camera_repository.dart')
           s = repo.read_text()
-          old = "if (_records.isEmpty || centerLat == null || centerLon == null || synced == null) {"
-          new = "if (centerLat == null || centerLon == null || synced == null) {"
-          if old not in s:
-              raise SystemExit('camera repository refresh gate not found')
-          repo.write_text(s.replace(old, new, 1))
+          pattern = re.compile(
+              r'if\s*\(\s*_records\.isEmpty\s*\|\|\s*centerLat\s*==\s*null\s*\|\|\s*centerLon\s*==\s*null\s*\|\|\s*synced\s*==\s*null\s*\)\s*\{',
+              re.MULTILINE,
+          )
+          replacement = 'if (centerLat == null || centerLon == null || synced == null) {'
+          if pattern.search(s):
+              s = pattern.sub(replacement, s, count=1)
+          elif '_records.isEmpty' in s:
+              raise SystemExit('camera repository refresh gate shape changed unexpectedly')
+          elif 'centerLat == null' not in s or 'centerLon == null' not in s or 'synced == null' not in s:
+              raise SystemExit('camera repository refresh gate missing')
+          repo.write_text(s)
 
           service = Path('scdrive-app/lib/features/camera/camera_awareness_service.dart')
           s = service.read_text()
-          old = "const Duration(seconds: 30)"
-          new = "const Duration(minutes: 2)"
-          if old not in s:
-              raise SystemExit('camera network retry interval not found')
-          service.write_text(s.replace(old, new, 1))
+          if 'const Duration(seconds: 30)' in s:
+              s = s.replace('const Duration(seconds: 30)', 'const Duration(minutes: 2)', 1)
+          elif 'const Duration(minutes: 2)' not in s:
+              raise SystemExit('camera network retry interval shape changed unexpectedly')
+          service.write_text(s)
           PY
           dart format \
             scdrive-app/lib/features/camera/camera_repository.dart \
             scdrive-app/lib/features/camera/camera_awareness_service.dart
-          grep -q 'Duration(minutes: 2)' scdrive-app/lib/features/camera/camera_awareness_service.dart
-          ! grep -q '_records.isEmpty || centerLat' scdrive-app/lib/features/camera/camera_repository.dart
+          python3 - <<'PY'
+          from pathlib import Path
+          r = Path('scdrive-app/lib/features/camera/camera_repository.dart').read_text()
+          s = Path('scdrive-app/lib/features/camera/camera_awareness_service.dart').read_text()
+          assert '_records.isEmpty' not in r, 'empty camera result must remain a valid synced cache'
+          assert 'Duration(minutes: 2)' in s, 'network refresh floor must be two minutes'
+          PY
           (cd scdrive-app && sha256sum -c /tmp/v181-physics-authority.sha256)
 
       - name: Require production Maps secret
