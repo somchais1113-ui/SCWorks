@@ -1,182 +1,207 @@
 === PUBSPEC FONTS ===
-25-  flutter_lints: ^6.0.0
-26-
-27-flutter:
-28-  uses-material-design: true
-29-  fonts:
-30:    - family: NissanBrand
-31-      fonts:
-32-        - asset: assets/fonts/NissanBrand-Regular.otf
-33-          weight: 400
-34-        - asset: assets/fonts/NissanBrand-Bold.otf
-35-          weight: 700
-=== SPEED DISPLAY / LARGE FONT CONTEXT ===
-=== DISPLAY SPEED REFERENCES ===
-379-  State<_InstrumentPanel> createState() => _InstrumentPanelState();
-380-}
-381-
-382-class _InstrumentPanelState extends State<_InstrumentPanel>
-383-    with SingleTickerProviderStateMixin {
-384-  late final Ticker _speedTicker;
-385-  Duration? _lastFrame;
-386-  double _visualSpeedKph = 0;
-387-  double _targetSpeedKph = 0;
-388-  double _visualRpm = 0;
-389-  double _targetRpm = 0;
-390-  double _cvtRatio = 0;
-391-  bool _gpsLocked = false;
-392-  String _vehicleState = 'SEARCHING';
-393-  int _digitalSpeed = 0;
-394-  bool _hadFreshFix = false;
-395-
-396-  @override
-397-  void initState() {
-398-    super.initState();
-399-    _readTelemetry(initial: true);
-400-    widget.telemetry.addListener(_onTelemetry);
-401-    _speedTicker = createTicker(_onFrame)..start();
-402-  }
-403-
-404-  @override
-405-  void didUpdateWidget(covariant _InstrumentPanel oldWidget) {
-406-    super.didUpdateWidget(oldWidget);
-407-    if (oldWidget.telemetry != widget.telemetry) {
-408-      oldWidget.telemetry.removeListener(_onTelemetry);
-409-      widget.telemetry.addListener(_onTelemetry);
-410-      _readTelemetry(initial: true);
-411-    }
-412-  }
-413-
-414-  void _onTelemetry() => _readTelemetry(initial: false);
-415-
-416-  void _readTelemetry({required bool initial}) {
-417-    final telemetry = widget.telemetry;
-418-    _gpsLocked = telemetry.hasUsableSpeedEstimate;
-419:    _targetSpeedKph = telemetry.displaySpeedKph.clamp(0, 240).toDouble();
-420-    _targetRpm = telemetry.estimatedRpm.clamp(0, 6000).toDouble();
-421-    _cvtRatio = telemetry.estimatedCvtRatio;
-422-    _vehicleState = telemetry.vehicleState;
-423-    if (initial || !_gpsLocked) {
-424-      _visualSpeedKph = _gpsLocked ? _targetSpeedKph : 0;
-425-      _visualRpm = _targetRpm;
-426-      _updateDigitalSpeed(_visualSpeedKph, _gpsLocked);
-427-    }
-428-  }
-429-
-430-  void _onFrame(Duration elapsed) {
-431-    final previous = _lastFrame;
-432-    _lastFrame = elapsed;
-433-    if (previous == null || !mounted) return;
-434-    final dt =
-435-        ((elapsed - previous).inMicroseconds / 1000000.0).clamp(0.001, 0.050);
-436-
-437-    if (!_gpsLocked) {
-438-      if (_visualSpeedKph != 0 || _digitalSpeed != 0) {
-439-        setState(() {
-440-          _visualSpeedKph = 0;
-441-          _updateDigitalSpeed(0, false);
-442-        });
-443-      }
-444-      return;
-445-    }
-446-
-447-    final error = _targetSpeedKph - _visualSpeedKph;
-448-    final absError = error.abs();
-449-
-450-    // Retargetable frame interpolation only. The target remains the physically
-451-    // grounded native VehicleSpeedEngine output. Braking intentionally tracks
-452-    // fastest, acceleration next, steady cruise slightly softer.
-453-    double tauSeconds;
-454-    if (_vehicleState == 'BRAKING' || error < -1.2) {
-455-      tauSeconds = 0.045;
-456-    } else if (_vehicleState == 'ACCELERATING' || error > 1.2) {
-457-      tauSeconds = 0.065;
-458-    } else {
-459-      tauSeconds = 0.105;
-460-    }
-461-    if (absError > 5.0) tauSeconds = 0.035;
-462-
-463-    final alpha = 1 - math.exp(-dt / tauSeconds);
-464-    var next = _visualSpeedKph + error * alpha;
-465-    if (absError < 0.025) next = _targetSpeedKph;
-466-
-467-    final rpmAlpha = 1 - math.exp(-dt / 0.12);
-468-    final nextRpm = _visualRpm + (_targetRpm - _visualRpm) * rpmAlpha;
-469-
-470-    if ((next - _visualSpeedKph).abs() > 0.002 ||
-471-        (nextRpm - _visualRpm).abs() > 0.5) {
-472-      setState(() {
-473-        _visualSpeedKph = next.clamp(0, 240).toDouble();
-474-        _visualRpm = nextRpm.clamp(0, 6000).toDouble();
-475-        _updateDigitalSpeed(_visualSpeedKph, true);
-476-      });
-477-    }
-478-  }
-479-
-480-  void _updateDigitalSpeed(double target, bool locked) {
-481-    if (!locked) {
-482-      _digitalSpeed = 0;
-483-      _hadFreshFix = false;
-484-      return;
-485-    }
-486-    if (!_hadFreshFix) {
-487-      _digitalSpeed = target.round().clamp(0, 240);
-488-      _hadFreshFix = true;
-489-      return;
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  fonts:
+    - family: NissanBrand
+      fonts:
+        - asset: assets/fonts/NissanBrand-Regular.otf
+          weight: 400
+        - asset: assets/fonts/NissanBrand-Bold.otf
+          weight: 700
+=== INSTRUMENT PANEL SPEED WIDGET ===
+  void _updateDigitalSpeed(double target, bool locked) {
+    if (!locked) {
+      _digitalSpeed = 0;
+      _hadFreshFix = false;
+      return;
+    }
+    if (!_hadFreshFix) {
+      _digitalSpeed = target.round().clamp(0, 240);
+      _hadFreshFix = true;
+      return;
+    }
+    // Small display-only hysteresis prevents 59/60/59 flicker. Because target
+    // is frame-interpolated, integer crossings now happen progressively rather
+    // than jumping several digits on a GNSS correction frame.
+    while (target >= _digitalSpeed + 0.56 && _digitalSpeed < 240) {
+      _digitalSpeed++;
+    }
+    while (target <= _digitalSpeed - 0.56 && _digitalSpeed > 0) {
+      _digitalSpeed--;
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.telemetry.removeListener(_onTelemetry);
+    _speedTicker.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final gpsLocked = _gpsLocked;
+    final speed = _visualSpeedKph.clamp(0, 240).toDouble();
+    final rpm = _visualRpm.clamp(0, 6000).toDouble();
+    final cvt = _cvtRatio;
+
+    return Container(
+      color: Colors.transparent,
+      child: Stack(
+        children: <Widget>[
+          Positioned.fill(
+            child: CustomPaint(
+              painter: _GaugeBackgroundPainter(
+                speedFraction: speed / 240,
+                rpmFraction: rpm / 6000,
+              ),
+            ),
+          ),
+          Padding(
+            padding: EdgeInsets.all(widget.compact ? 20 : 30),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                const SizedBox(height: 2),
+                const Spacer(),
+                Center(
+                  child: Column(
+                    children: <Widget>[
+                      SizedBox(
+                        width: widget.compact ? 330 : 430,
+                        height: widget.compact ? 108 : 142,
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            gpsLocked ? _digitalSpeed.toString() : '--',
+                            maxLines: 1,
+                            softWrap: false,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontFamily: 'NissanBrand',
+                              fontSize: _digitalSpeed >= 100
+                                  ? (widget.compact ? 94 : 124)
+                                  : (widget.compact ? 104 : 138),
+                              height: 0.90,
+                              fontWeight: FontWeight.w400,
+                              letterSpacing: _digitalSpeed >= 100 ? -0.6 : -1.0,
+                              fontFeatures: const <ui.FontFeature>[
+                                ui.FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      Text(
+                        'km/h',
+                        style: TextStyle(
+                          color: const Color(0xFFAAB0B8),
+                          fontFamily: 'NissanBrand',
+                          fontSize: widget.compact ? 18 : 24,
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                      SizedBox(height: widget.compact ? 8 : 12),
+                      Container(
+                        width: widget.compact ? 160 : 220,
+                        height: 1,
+                        color: const Color(0xFF46505A),
+                      ),
+                      SizedBox(height: widget.compact ? 8 : 10),
+                      Text(
+                        gpsLocked &&
+                                widget.telemetry.gpsState == GpsState.locked
+                            ? 'GPS SPEED'
+                            : widget.telemetry.gpsStatusLabel,
+                        style: TextStyle(
+                          color: gpsLocked
+                              ? const Color(0xFF39BFF0)
+                              : const Color(0xFFE5A35B),
+                          fontSize: widget.compact ? 11 : 14,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Spacer(),
+                Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: _InstrumentMetric(
+                        label: 'EST. ENGINE RPM',
+                        value: gpsLocked ? rpm.round().toString() : '--',
+                        suffix: 'rpm',
+                        warning: true,
+                      ),
+                    ),
+                    Container(
+                      width: 1,
+                      height: widget.compact ? 54 : 68,
+                      color: const Color(0xFF26303B),
+                    ),
+                    Expanded(
+                      child: _InstrumentMetric(
+                        label: 'CVT RATIO',
+                        value: gpsLocked ? cvt.toStringAsFixed(2) : '--',
+                        suffix: 'x',
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InstrumentMetric extends StatelessWidget {
+  const _InstrumentMetric({
+    required this.label,
+    required this.suffix,
+    this.value,
+    this.valueWidget,
+    this.warning = false,
+  }) : assert(value != null || valueWidget != null);
+
+  final String label;
+  final String? value;
+  final Widget? valueWidget;
+  final String suffix;
+  final bool warning;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
 === APP THEME FONT ===
-65-    }
-66-  }
-67-
-68-  @override
-69-  void dispose() {
-70-    WidgetsBinding.instance.removeObserver(this);
-71-    _vehicleState.dispose();
-72-    _obd.dispose();
-73-    _weather.dispose();
-74-    _driveData.dispose();
-75-    _telemetry.dispose();
-76-    _carIntegration.dispose();
-77-    _carRadio.dispose();
-78-    _spotify.dispose();
-79-    super.dispose();
-80-  }
-81-
-82-  @override
-83-  Widget build(BuildContext context) {
-84-    return MaterialApp(
-85-      title: AppConfig.appName,
-86-      debugShowCheckedModeBanner: false,
-87-      theme: ThemeData(
-88-        useMaterial3: true,
-89-        brightness: Brightness.light,
-90:        fontFamily: 'NissanBrand',
-91-        colorScheme: ColorScheme.fromSeed(
-92-          seedColor: const Color(0xFF111827),
-93-        ),
-94-        scaffoldBackgroundColor: const Color(0xFFF4F6F8),
-95-      ),
-96-      home: LayoutBuilder(
-97-        builder: (context, constraints) {
-98-          final headUnit = constraints.maxWidth >= 800 &&
-99-              constraints.maxWidth > constraints.maxHeight;
-100-          if (headUnit) {
-101-            return HeadUnitScreen(
-102-              spotify: _spotify,
-103-              radio: _carRadio,
-104-              telemetry: _telemetry,
-105-              driveData: _driveData,
-106-              platform: _headUnitPlatform,
-107-              weather: _weather,
-108-              obd: _obd,
-109-              vehicleState: _vehicleState,
-110-            );
-111-          }
-112-          return HomeScreen(
-113-            carIntegration: _carIntegration,
-114-            spotify: _spotify,
-115-          );
-116-        },
-117-      ),
-118-    );
-119-  }
-120-}
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: AppConfig.appName,
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.light,
+        fontFamily: 'NissanBrand',
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF111827),
+        ),
+        scaffoldBackgroundColor: const Color(0xFFF4F6F8),
+      ),
+      home: LayoutBuilder(
+        builder: (context, constraints) {
+          final headUnit = constraints.maxWidth >= 800 &&
+              constraints.maxWidth > constraints.maxHeight;
+          if (headUnit) {
+            return HeadUnitScreen(
+              spotify: _spotify,
