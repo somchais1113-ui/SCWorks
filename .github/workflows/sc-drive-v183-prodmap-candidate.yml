@@ -44,6 +44,36 @@ jobs:
           grep -n '^version: 1.8.3+29' scdrive-app/pubspec.yaml
           (cd scdrive-app && sha256sum -c /tmp/v181-physics-authority.sha256)
 
+      - name: Harden camera repository refresh policy
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          repo = Path('scdrive-app/lib/features/camera/camera_repository.dart')
+          s = repo.read_text()
+          old = "if (_records.isEmpty || centerLat == null || centerLon == null || synced == null) {"
+          new = "if (centerLat == null || centerLon == null || synced == null) {"
+          if old not in s:
+              raise SystemExit('camera repository refresh gate not found')
+          repo.write_text(s.replace(old, new, 1))
+
+          service = Path('scdrive-app/lib/features/camera/camera_awareness_service.dart')
+          s = service.read_text()
+          old = "const Duration(seconds: 30)"
+          new = "const Duration(minutes: 2)"
+          if old not in s:
+              raise SystemExit('camera network retry interval not found')
+          service.write_text(s.replace(old, new, 1))
+          PY
+          dart format \
+            scdrive-app/lib/features/camera/camera_repository.dart \
+            scdrive-app/lib/features/camera/camera_awareness_service.dart
+          grep -q 'Duration(minutes: 2)' scdrive-app/lib/features/camera/camera_awareness_service.dart
+          ! grep -q '_records.isEmpty || centerLat' scdrive-app/lib/features/camera/camera_repository.dart
+          (cd scdrive-app && sha256sum -c /tmp/v181-physics-authority.sha256)
+
       - name: Require production Maps secret
         shell: bash
         env:
