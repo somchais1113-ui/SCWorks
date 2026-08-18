@@ -54,17 +54,15 @@ jobs:
           OUT=build-status/sc-drive-v184-source-inspection.txt
           {
             echo '=== PUBSPEC FONTS ==='
-            grep -n -A35 -B5 'family: Nissan' scdrive-app/pubspec.yaml || true
-            echo '=== SPEED DISPLAY / LARGE FONT CONTEXT ==='
-            grep -n -B70 -A110 'fontSize: widget.compact ? 113 : 151' scdrive-app/lib/features/head_unit/head_unit_screen.dart || true
-            echo '=== DISPLAY SPEED REFERENCES ==='
-            grep -n -B40 -A70 'displaySpeedKph' scdrive-app/lib/features/head_unit/head_unit_screen.dart || true
+            sed -n '24,60p' scdrive-app/pubspec.yaml
+            echo '=== INSTRUMENT PANEL SPEED WIDGET ==='
+            sed -n '480,650p' scdrive-app/lib/features/head_unit/head_unit_screen.dart
             echo '=== APP THEME FONT ==='
-            grep -n -B25 -A55 'fontFamily' scdrive-app/lib/app/app.dart | head -220 || true
+            sed -n '82,102p' scdrive-app/lib/app/app.dart
           } > "$OUT"
           git config user.name 'SC Drive Build Bot'
           git config user.email 'actions@users.noreply.github.com'
           git add "$OUT"
-          git commit -m 'publish v1.8.4 source inspection [skip ci]' || true
+          git commit -m 'publish v1.8.4 source inspection detail [skip ci]' || true
           git pull --rebase origin sc-drive-apk-build || true
           git push origin HEAD:sc-drive-apk-build || true
