@@ -1,4 +1,4 @@
-name: Inspect SC Drive v1.8.2 Map Controls
+name: Build SC Drive v1.8.3 Camera Candidate Tracked
 
 on:
   push:
@@ -11,41 +11,127 @@ permissions:
   contents: write
 
 jobs:
-  inspect:
+  candidate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
+      - name: Publish running pointer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p build-status
+          cat > build-status/sc-drive-v183-tracked.txt <<EOF
+          STATUS=running
+          RUN_ID=$GITHUB_RUN_ID
+          SOURCE_SHA=$GITHUB_SHA
+          ARTIFACT_NAME=SC-Drive-v1.8.3-Camera-Awareness-CANDIDATE
+          APK_SHA256=
+          EOF
+          git config user.name 'SC Drive Build Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add build-status/sc-drive-v183-tracked.txt
+          git commit -m 'publish v1.8.3 running pointer [skip ci]'
+          git push origin HEAD:sc-drive-apk-build
+
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
+
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.35.7'
           channel: stable
           cache: true
+
       - name: Reconstruct exact v1.8.2 source
         shell: bash
         run: |
           set -euxo pipefail
-          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android-final"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v182-final-sign.yml 'Reconstruct exact v1.8.2 source' >/tmp/v183-base.sh
-          bash /tmp/v183-base.sh
-      - name: Publish exact map-control snippet
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v183-camera.yml 'Reconstruct exact v1.8.2 source' >/tmp/v183-reconstruct.sh
+          bash /tmp/v183-reconstruct.sh
+
+      - name: Apply v1.8.3 Camera Awareness overlay
         shell: bash
         run: |
           set -euxo pipefail
-          FILE=scdrive-app/lib/features/head_unit/drive_deck_panel.dart
-          mkdir -p build-status
-          {
-            echo '=== MAP ZOOM ==='
-            grep -n -B12 -A18 '_MapZoomControls' "$FILE" || true
-            echo '=== MAP COMPASS ==='
-            grep -n -B12 -A18 '_MapCompass' "$FILE" || true
-          } > build-status/sc-drive-v182-map-controls.txt
-          cat build-status/sc-drive-v182-map-controls.txt
-          git config user.name 'SC Drive Build Bot'
-          git config user.email 'actions@users.noreply.github.com'
-          git add build-status/sc-drive-v182-map-controls.txt
-          git commit -m 'publish v1.8.2 map-control snippet [skip ci]'
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v183-camera.yml 'Apply v1.8.3 Camera Awareness overlay' >/tmp/v183-apply.sh
+          bash /tmp/v183-apply.sh
+
+      - name: Resolve dependencies
+        working-directory: scdrive-app
+        run: |
+          rm -f "$PUB_CACHE/credentials.json" "$HOME/.pub-cache/credentials.json" || true
+          flutter pub get
+
+      - name: Android unit tests
+        working-directory: scdrive-app/android
+        env:
+          GOOGLE_MAPS_API_KEY: AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Strict Flutter analyze
+        working-directory: scdrive-app
+        run: flutter analyze --no-fatal-infos
+
+      - name: Build production-profile test-signed candidate
+        working-directory: scdrive-app
+        env:
+          GOOGLE_MAPS_API_KEY: AIzaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: |
+          set -euxo pipefail
+          flutter build apk --release --dart-define=SC_DRIVE_BUILD_PROFILE=production
+
+      - name: Verify and package candidate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
+          mkdir -p out/build-tools/lib
+          cp "$APK" out/SC_Drive-v1.8.3-Camera-Awareness-CANDIDATE.apk
+          cp "$BT/zipalign" out/build-tools/zipalign
+          cp "$BT/apksigner" out/build-tools/apksigner
+          cp "$BT/lib/apksigner.jar" out/build-tools/lib/apksigner.jar
+          cp "$BT/aapt" out/build-tools/aapt
+          chmod +x out/build-tools/zipalign out/build-tools/apksigner out/build-tools/aapt
+          unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'CAMERA AHEAD'
+          unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'OPENSTREETMAP'
+          unzip -p "$APK" classes.dex | strings | grep -F -m1 'SYSTEM_RADIO_APP'
+          "$BT/aapt" dump badging "$APK" | tee out/AAPT-BADGING.txt
+          grep -q "package: name='com.scdeport.scdrive'" out/AAPT-BADGING.txt
+          grep -q "versionCode='29'" out/AAPT-BADGING.txt
+          grep -q "versionName='1.8.3'" out/AAPT-BADGING.txt
+          sha256sum out/SC_Drive-v1.8.3-Camera-Awareness-CANDIDATE.apk > out/CANDIDATE.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.8.3-Camera-Awareness-CANDIDATE
+          path: out/**
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish final tracked pointer
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK_SHA=''
+          if [[ -f out/CANDIDATE.sha256 ]]; then APK_SHA=$(cut -d' ' -f1 out/CANDIDATE.sha256); fi
+          cat > build-status/sc-drive-v183-tracked.txt <<EOF
+          STATUS=${{ job.status }}
+          RUN_ID=$GITHUB_RUN_ID
+          SOURCE_SHA=$GITHUB_SHA
+          ARTIFACT_NAME=SC-Drive-v1.8.3-Camera-Awareness-CANDIDATE
+          APK_SHA256=$APK_SHA
+          EOF
+          git add build-status/sc-drive-v183-tracked.txt
+          git commit -m 'publish v1.8.3 tracked result [skip ci]'
           git push origin HEAD:sc-drive-apk-build
