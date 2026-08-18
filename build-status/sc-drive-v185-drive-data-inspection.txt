@@ -1,0 +1,1432 @@
+=== HEAD UNIT SCREEN: DRIVE/PAGE/NAV TERMS ===
+9-import 'drive_deck_panel.dart';
+10-
+11-import '../../domain/weather_models.dart';
+12-import '../../services/car_radio_service.dart';
+13-import '../../services/drive_telemetry_service.dart';
+14-import '../../services/drive_data_service.dart';
+15-import '../../services/head_unit_platform_service.dart';
+16-import '../../services/obd_service.dart';
+17-import '../../services/spotify_service.dart';
+18-import '../../services/weather_service.dart';
+19-import '../../services/vehicle_state_service.dart';
+20-import '../../widgets/speed_debug_overlay.dart';
+21-import '../../widgets/spotify_live_progress.dart';
+22-import 'car_radio_panel.dart';
+23-
+24-class HeadUnitScreen extends StatefulWidget {
+25-  const HeadUnitScreen({
+26-    required this.spotify,
+27-    required this.radio,
+28-    required this.telemetry,
+29:    required this.driveData,
+30-    required this.platform,
+31-    required this.weather,
+32-    required this.obd,
+33-    required this.vehicleState,
+34-    super.key,
+35-  });
+36-
+37-  final SpotifyService spotify;
+38-  final CarRadioService radio;
+39-  final DriveTelemetryService telemetry;
+40:  final DriveDataService driveData;
+41-  final HeadUnitPlatformService platform;
+42-  final WeatherService weather;
+43-  final ObdService obd;
+44-  final VehicleStateService vehicleState;
+45-
+46-  @override
+47-  State<HeadUnitScreen> createState() => _HeadUnitScreenState();
+48-}
+49-
+50-class _HeadUnitScreenState extends State<HeadUnitScreen> {
+51-  Timer? _clockTimer;
+52-  DateTime _now = DateTime.now();
+53-  bool _isDefaultHome = false;
+54-  bool _showSpeedDebug = false;
+55-
+56-  @override
+57-  void initState() {
+58-    super.initState();
+59-    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+60-      if (mounted) setState(() => _now = DateTime.now());
+61-    });
+62-    unawaited(_refreshHomeRole());
+63-  }
+64-
+65-  Future<void> _refreshHomeRole() async {
+66-    final value = await widget.platform.isDefaultHome();
+67-    if (mounted) setState(() => _isDefaultHome = value);
+68-  }
+69-
+70-  void _toggleSpeedDebug() {
+71-    final next = !_showSpeedDebug;
+72-    setState(() => _showSpeedDebug = next);
+73-    unawaited(widget.telemetry.setSpeedDebugEnabled(next));
+74-  }
+75-
+76-  void _showWeatherDetails(BuildContext context) {
+77-    showDialog<void>(
+78-      context: context,
+79-      builder: (_) => _WeatherDetailsDialog(weather: widget.weather),
+80-    );
+81-  }
+82-
+83-  void _showSettings(BuildContext context) {
+84-    showDialog<void>(
+85-      context: context,
+86-      builder: (_) => _ScDriveSettingsDialog(
+87-        spotify: widget.spotify,
+88-        telemetry: widget.telemetry,
+89:        driveData: widget.driveData,
+90-        obd: widget.obd,
+91-      ),
+92-    );
+93-  }
+94-
+95-  @override
+96-  void dispose() {
+97-    _clockTimer?.cancel();
+98-    super.dispose();
+99-  }
+100-
+101-  String _two(int value) => value.toString().padLeft(2, '0');
+102-
+103-  String get _timeLabel => '${_two(_now.hour)}:${_two(_now.minute)}';
+104-
+105-  String get _dateLabel {
+106-    const months = <String>[
+107-      'JAN',
+108-      'FEB',
+109-      'MAR',
+110-      'APR',
+111-      'MAY',
+112-      'JUN',
+113-      'JUL',
+114-      'AUG',
+115-      'SEP',
+116-      'OCT',
+117-      'NOV',
+118-      'DEC',
+119-    ];
+120-    return '${_two(_now.day)} ${months[_now.month - 1]} ${_now.year}';
+121-  }
+122-
+123-  @override
+124-  Widget build(BuildContext context) {
+125-    return Scaffold(
+126-      backgroundColor: const Color(0xFF070A0E),
+127-      body: SafeArea(
+128-        child: AnimatedBuilder(
+129-          // High-frequency vehicle telemetry must not rebuild the whole
+130-          // dashboard. InstrumentPanel and DriveDeckPanel subscribe locally.
+131-          animation: Listenable.merge(<Listenable>[
+132-            widget.spotify,
+133-            widget.weather,
+134-          ]),
+135-          builder: (context, _) {
+136-            return LayoutBuilder(
+137-              builder: (context, constraints) {
+138-                final compact = constraints.maxHeight < 600;
+139-                return Padding(
+140-                  padding: EdgeInsets.fromLTRB(
+141-                    compact ? 18 : 26,
+142-                    compact ? 14 : 20,
+143-                    compact ? 18 : 26,
+144-                    compact ? 14 : 20,
+145-                  ),
+146-                  child: Column(
+147-                    children: <Widget>[
+148-                      _TopBar(
+149-                        time: _timeLabel,
+150-                        date: _dateLabel,
+151-                        defaultHome: _isDefaultHome,
+152-                        onSetHome: () async {
+153-                          await widget.platform.requestDefaultHome();
+154-                          await Future<void>.delayed(
+155-                              const Duration(seconds: 1));
+156-                          await _refreshHomeRole();
+157-                        },
+158-                        compact: compact,
+159-                        weather: widget.weather,
+160-                        onWeatherTap: () => _showWeatherDetails(context),
+161-                        onSettingsTap: () => _showSettings(context),
+162-                      ),
+163-                      SizedBox(height: compact ? 12 : 18),
+164-                      Expanded(
+165-                        child: Row(
+166-                          crossAxisAlignment: CrossAxisAlignment.stretch,
+167-                          children: <Widget>[
+168-                            Expanded(
+169-                              flex: 49,
+--
+198-                            Expanded(
+199-                              flex: 51,
+200-                              child: Column(
+201-                                children: <Widget>[
+202-                                  Expanded(
+203-                                    flex: 51,
+204-                                    child: RepaintBoundary(
+205-                                      child: _MediaPager(
+206-                                        spotify: widget.spotify,
+207-                                        radio: widget.radio,
+208-                                        compact: compact,
+209-                                      ),
+210-                                    ),
+211-                                  ),
+212-                                  SizedBox(height: compact ? 12 : 18),
+213-                                  Expanded(
+214-                                    flex: 49,
+215-                                    child: RepaintBoundary(
+216-                                      child: DriveDeckPanel(
+217-                                        telemetry: widget.telemetry,
+218:                                        driveData: widget.driveData,
+219-                                        weather: widget.weather,
+220-                                        platform: widget.platform,
+221-                                        compact: compact,
+222-                                      ),
+223-                                    ),
+224-                                  ),
+225-                                ],
+226-                              ),
+227-                            ),
+228-                          ],
+229-                        ),
+230-                      ),
+231-                    ],
+232-                  ),
+233-                );
+234-              },
+235-            );
+236-          },
+237-        ),
+238-      ),
+239-    );
+240-  }
+241-}
+242-
+243-class _TopBar extends StatelessWidget {
+244-  const _TopBar({
+245-    required this.time,
+246-    required this.date,
+247-    required this.defaultHome,
+248-    required this.onSetHome,
+249-    required this.compact,
+250-    required this.weather,
+251-    required this.onWeatherTap,
+252-    required this.onSettingsTap,
+253-  });
+254-
+255-  final String time;
+256-  final String date;
+257-  final bool defaultHome;
+258-  final VoidCallback onSetHome;
+259-  final bool compact;
+260-  final WeatherService weather;
+261-  final VoidCallback onWeatherTap;
+262-  final VoidCallback onSettingsTap;
+263-
+264-  @override
+265-  Widget build(BuildContext context) {
+266-    return SizedBox(
+267-      height: compact ? 58 : 72,
+268-      child: Row(
+269-        children: <Widget>[
+270-          const Expanded(
+271-            flex: 4,
+272-            child: Align(
+273-              alignment: Alignment.centerLeft,
+274-              child: Row(
+275-                mainAxisSize: MainAxisSize.min,
+276-                children: <Widget>[
+277-                  Text(
+278-                    'SC DRIVE',
+279-                    style: TextStyle(
+280-                      color: Colors.white,
+281-                      fontFamily: 'NissanBrand',
+282-                      fontSize: 22,
+283-                      fontWeight: FontWeight.w800,
+284-                      letterSpacing: 0.5,
+285-                    ),
+286-                  ),
+287-                  SizedBox(width: 14),
+288-                  SizedBox(
+289-                    height: 27,
+290-                    child: VerticalDivider(
+291-                      width: 1,
+292-                      thickness: 1,
+293-                      color: Color(0xFF6F7884),
+294-                    ),
+295-                  ),
+296-                  SizedBox(width: 14),
+297-                  Text(
+298-                    'NISSAN TEANA J32',
+--
+697-  }
+698-}
+699-
+700-
+701-class _MediaPager extends StatefulWidget {
+702-  const _MediaPager({
+703-    required this.spotify,
+704-    required this.radio,
+705-    required this.compact,
+706-  });
+707-
+708-  final SpotifyService spotify;
+709-  final CarRadioService radio;
+710-  final bool compact;
+711-
+712-  @override
+713-  State<_MediaPager> createState() => _MediaPagerState();
+714-}
+715-
+716-class _MediaPagerState extends State<_MediaPager> {
+717:  final PageController _controller = PageController();
+718-  int _page = 0;
+719-
+720-  @override
+721-  void dispose() {
+722-    _controller.dispose();
+723-    super.dispose();
+724-  }
+725-
+726-  @override
+727-  Widget build(BuildContext context) {
+728-    return Stack(
+729-      children: <Widget>[
+730:        PageView(
+731-          controller: _controller,
+732-          physics: const ClampingScrollPhysics(),
+733-          onPageChanged: (page) => setState(() => _page = page),
+734-          children: <Widget>[
+735-            _SpotifyPanel(
+736-              spotify: widget.spotify,
+737-              compact: widget.compact,
+738-            ),
+739-            CarRadioPanel(
+740-              radio: widget.radio,
+741-              compact: widget.compact,
+742-            ),
+743-          ],
+744-        ),
+745-        Positioned(
+746-          left: 0,
+747-          right: 0,
+748-          bottom: widget.compact ? 5 : 7,
+749-          child: IgnorePointer(
+750-            child: Center(
+751-              child: Container(
+752-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+753-                decoration: BoxDecoration(
+754-                  color: const Color(0x99070A0E),
+755-                  borderRadius: BorderRadius.circular(999),
+756-                ),
+757-                child: Row(
+758-                  mainAxisSize: MainAxisSize.min,
+759-                  children: List<Widget>.generate(2, (index) {
+760-                    final active = index == _page;
+761-                    return AnimatedContainer(
+762-                      duration: const Duration(milliseconds: 180),
+763-                      curve: Curves.easeOutCubic,
+764-                      width: active ? 17 : 6,
+765-                      height: 4,
+766-                      margin: const EdgeInsets.symmetric(horizontal: 3),
+767-                      decoration: BoxDecoration(
+768-                        color: active
+769-                            ? (index == 0
+770-                                ? const Color(0xFF1ED760)
+771-                                : const Color(0xFFE72846))
+772-                            : const Color(0xFF5D6773),
+773-                        borderRadius: BorderRadius.circular(999),
+774-                      ),
+775-                    );
+776-                  }),
+777-                ),
+778-              ),
+779-            ),
+780-          ),
+781-        ),
+782-      ],
+783-    );
+784-  }
+785-}
+786-
+787-class _SpotifyPanel extends StatelessWidget {
+788-  const _SpotifyPanel({required this.spotify, required this.compact});
+789-
+790-  final SpotifyService spotify;
+791-  final bool compact;
+792-
+793-  @override
+794-  Widget build(BuildContext context) {
+795-    final track = spotify.nowPlaying;
+796-    return Container(
+797-      padding: EdgeInsets.all(compact ? 18 : 22),
+798-      decoration: BoxDecoration(
+799-        color: const Color(0xFF0D1117),
+800-        borderRadius: BorderRadius.circular(20),
+801-        border: Border.all(color: const Color(0xFF30343B)),
+802-      ),
+803-      child: spotify.authenticated
+804-          ? Column(
+805-              children: <Widget>[
+806-                Row(
+807-                  children: <Widget>[
+808-                    const Icon(Icons.graphic_eq_rounded,
+809-                        color: Color(0xFF1ED760), size: 22),
+810-                    const SizedBox(width: 8),
+--
+1359-                        color: Color(0xFFE8A36A),
+1360-                        fontSize: 9.5,
+1361-                        fontWeight: FontWeight.w600,
+1362-                      ),
+1363-                    ),
+1364-                  ],
+1365-                ],
+1366-              ),
+1367-            );
+1368-          },
+1369-        ),
+1370-      ),
+1371-    );
+1372-  }
+1373-}
+1374-
+1375-class _ScDriveSettingsDialog extends StatefulWidget {
+1376-  const _ScDriveSettingsDialog({
+1377-    required this.spotify,
+1378-    required this.telemetry,
+1379:    required this.driveData,
+1380-    required this.obd,
+1381-  });
+1382-
+1383-  final SpotifyService spotify;
+1384-  final DriveTelemetryService telemetry;
+1385:  final DriveDataService driveData;
+1386-  final ObdService obd;
+1387-
+1388-  @override
+1389-  State<_ScDriveSettingsDialog> createState() => _ScDriveSettingsDialogState();
+1390-}
+1391-
+1392-class _ScDriveSettingsDialogState extends State<_ScDriveSettingsDialog> {
+1393-  late final TextEditingController _odo;
+1394-  bool _savingOdo = false;
+1395-  String? _odoError;
+1396-
+1397-  @override
+1398-  void initState() {
+1399-    super.initState();
+1400-    _odo = TextEditingController(
+1401:      text: widget.driveData.odometerKm?.toStringAsFixed(1) ?? '',
+1402-    );
+1403-  }
+1404-
+1405-  @override
+1406-  void dispose() {
+1407-    _odo.dispose();
+1408-    super.dispose();
+1409-  }
+1410-
+1411-  Future<void> _saveOdo() async {
+1412-    final normalized = _odo.text.replaceAll(',', '').trim();
+1413-    final value = double.tryParse(normalized);
+1414-    if (value == null || value < 0) {
+1415-      setState(() => _odoError = 'Enter a valid odometer in km.');
+1416-      return;
+1417-    }
+1418-    setState(() {
+1419-      _savingOdo = true;
+1420-      _odoError = null;
+1421-    });
+1422-    try {
+1423:      await widget.driveData.calibrateOdometer(value);
+1424-      if (mounted) {
+1425-        _odo.text =
+1426:            widget.driveData.odometerKm?.toStringAsFixed(1) ?? normalized;
+1427-      }
+1428-    } catch (_) {
+1429-      if (mounted) setState(() => _odoError = 'Unable to save this value.');
+1430-    } finally {
+1431-      if (mounted) setState(() => _savingOdo = false);
+1432-    }
+1433-  }
+1434-
+1435-  @override
+1436-  Widget build(BuildContext context) {
+1437-    return Dialog(
+1438-      backgroundColor: const Color(0xFF0B1016),
+1439-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
+1440-      child: ConstrainedBox(
+1441-        constraints: const BoxConstraints(maxWidth: 820, maxHeight: 620),
+1442-        child: AnimatedBuilder(
+1443-          animation: Listenable.merge(<Listenable>[
+1444-            widget.spotify,
+1445-            widget.telemetry,
+1446:            widget.driveData,
+1447-            widget.obd,
+1448-          ]),
+1449-          builder: (context, _) {
+1450-            return Padding(
+1451-              padding: const EdgeInsets.all(24),
+1452-              child: Column(
+1453-                children: <Widget>[
+1454-                  Row(
+1455-                    children: <Widget>[
+1456-                      const Icon(Icons.settings_rounded,
+1457-                          color: Color(0xFF39BFF0), size: 30),
+1458-                      const SizedBox(width: 12),
+1459-                      const Expanded(
+1460-                        child: Column(
+1461-                          crossAxisAlignment: CrossAxisAlignment.start,
+1462-                          children: <Widget>[
+1463-                            Text('SC DRIVE SETTINGS',
+1464-                                style: TextStyle(
+1465-                                  color: Colors.white,
+1466-                                  fontSize: 20,
+1467-                                  fontWeight: FontWeight.w900,
+1468-                                )),
+1469-                            Text('Vehicle • OBD-II • Spotify • GPS / Map',
+1470-                                style: TextStyle(
+1471-                                  color: Color(0xFF748091),
+1472-                                  fontSize: 10,
+1473-                                  fontWeight: FontWeight.w700,
+1474-                                )),
+1475-                          ],
+1476-                        ),
+1477-                      ),
+1478-                      IconButton(
+1479-                        onPressed: () => Navigator.of(context).pop(),
+1480-                        icon: const Icon(Icons.close_rounded),
+1481-                        color: Colors.white,
+1482-                      ),
+1483-                    ],
+1484-                  ),
+1485-                  const SizedBox(height: 18),
+1486-                  Expanded(
+1487-                    child: SingleChildScrollView(
+1488-                      child: Column(
+1489-                        children: <Widget>[
+1490-                          _SettingsSection(
+1491-                            title: 'VEHICLE',
+1492-                            icon: Icons.directions_car_filled_rounded,
+1493-                            child: Column(
+1494-                              children: <Widget>[
+1495-                                Row(
+1496-                                  crossAxisAlignment: CrossAxisAlignment.end,
+1497-                                  children: <Widget>[
+1498-                                    Expanded(
+1499-                                      child: TextField(
+1500-                                        controller: _odo,
+1501-                                        keyboardType: const TextInputType
+1502-                                            .numberWithOptions(decimal: true),
+1503-                                        style: const TextStyle(
+1504-                                            color: Colors.white),
+1505-                                        decoration: InputDecoration(
+1506-                                          labelText:
+1507-                                              'CURRENT VEHICLE ODOMETER (km)',
+1508-                                          labelStyle: const TextStyle(
+1509-                                              color: Color(0xFF8995A5)),
+1510-                                          errorText: _odoError,
+1511-                                          filled: true,
+1512-                                          fillColor: const Color(0xFF111820),
+1513-                                          border: OutlineInputBorder(
+1514-                                            borderRadius:
+1515-                                                BorderRadius.circular(12),
+1516-                                            borderSide: const BorderSide(
+1517-                                                color: Color(0xFF303B48)),
+1518-                                          ),
+1519-                                        ),
+1520-                                      ),
+1521-                                    ),
+1522-                                    const SizedBox(width: 10),
+1523-                                    FilledButton(
+1524-                                      onPressed: _savingOdo ? null : _saveOdo,
+1525-                                      style: FilledButton.styleFrom(
+1526-                                        backgroundColor:
+--
+1535-                                ),
+1536-                                const SizedBox(height: 8),
+1537-                                const Align(
+1538-                                  alignment: Alignment.centerLeft,
+1539-                                  child: Text(
+1540-                                    'SC Drive Estimated Odometer: it follows your manual calibration and adds quality-gated GPS/IMU distance. It is not the ECU/cluster odometer.',
+1541-                                    style: TextStyle(
+1542-                                      color: Color(0xFF6E7A89),
+1543-                                      fontSize: 9.5,
+1544-                                      height: 1.35,
+1545-                                      fontWeight: FontWeight.w600,
+1546-                                    ),
+1547-                                  ),
+1548-                                ),
+1549-                                const SizedBox(height: 12),
+1550-                                Row(
+1551-                                  children: <Widget>[
+1552-                                    Expanded(
+1553-                                      child: _SettingsReadout(
+1554-                                        label: 'ODO',
+1555:                                        value: widget.driveData.odometerKm ==
+1556-                                                null
+1557-                                            ? 'NOT SET'
+1558:                                            : '${widget.driveData.odometerKm!.toStringAsFixed(1)} km',
+1559-                                      ),
+1560-                                    ),
+1561-                                    const SizedBox(width: 8),
+1562-                                    Expanded(
+1563-                                      child: _SettingsReadout(
+1564-                                        label: 'TRIP A',
+1565-                                        value:
+1566:                                            '${widget.driveData.tripDistanceKm.toStringAsFixed(1)} km',
+1567-                                      ),
+1568-                                    ),
+1569-                                    const SizedBox(width: 8),
+1570-                                    OutlinedButton.icon(
+1571-                                      onPressed: () => unawaited(
+1572:                                          widget.driveData.resetTripA()),
+1573-                                      icon:
+1574-                                          const Icon(Icons.restart_alt_rounded),
+1575-                                      label: const Text('RESET TRIP A'),
+1576-                                    ),
+1577-                                  ],
+1578-                                ),
+1579-                              ],
+1580-                            ),
+1581-                          ),
+1582-                          const SizedBox(height: 12),
+1583-                          _ObdSettingsSection(obd: widget.obd),
+1584-                          const SizedBox(height: 12),
+1585-                          _SettingsSection(
+1586-                            title: 'SPOTIFY',
+1587-                            icon: Icons.graphic_eq_rounded,
+1588-                            child: Column(
+1589-                              children: <Widget>[
+1590-                                ListTile(
+1591-                                  contentPadding: EdgeInsets.zero,
+1592-                                  title: const Text('Car playback device',
+1593-                                      style: TextStyle(
+1594-                                          color: Colors.white,
+1595-                                          fontWeight: FontWeight.w800)),
+1596-                                  subtitle: Text(
+1597-                                    widget.spotify.preferredCarDeviceName ??
+1598-                                        'Not selected',
+1599-                                    style: const TextStyle(
+1600-                                        color: Color(0xFF7E8A99)),
+1601-                                  ),
+1602-                                  trailing: OutlinedButton(
+1603-                                    onPressed: () => _showSpotifyDeviceDialog(
+1604-                                        context, widget.spotify),
+1605-                                    child: const Text('CHOOSE DEVICE'),
+1606-                                  ),
+1607-                                ),
+1608-                                SwitchListTile(
+1609-                                  contentPadding: EdgeInsets.zero,
+1610-                                  value: widget.spotify.autoTransferToCar,
+1611-                                  activeThumbColor: const Color(0xFF1ED760),
+1612-                                  title: const Text(
+1613-                                      'Auto transfer Spotify to car',
+1614-                                      style: TextStyle(
+1615-                                          color: Colors.white,
+1616-                                          fontWeight: FontWeight.w800)),
+1617-                                  subtitle: const Text(
+1618-                                    'When SC Drive resumes, move playback from the phone to the selected head-unit Spotify device.',
+1619-                                    style: TextStyle(
+1620-                                        color: Color(0xFF748091), fontSize: 10),
+1621-                                  ),
+1622-                                  onChanged:
+1623-                                      widget.spotify.preferredCarDeviceName ==
+1624-                                              null
+1625-                                          ? null
+1626-                                          : (value) => unawaited(widget.spotify
+1627-                                              .setAutoTransferToCar(value)),
+1628-                                ),
+1629-                              ],
+1630-                            ),
+1631-                          ),
+1632-                          const SizedBox(height: 12),
+1633-                          _SettingsSection(
+1634-                            title: 'GPS / MAP',
+1635-                            icon: Icons.gps_fixed_rounded,
+1636-                            child: Column(
+1637-                              children: <Widget>[
+1638-                                Row(
+1639-                                  children: <Widget>[
+1640-                                    Expanded(
+1641-                                        child: _SettingsReadout(
+1642-                                            label: 'STATE',
+1643-                                            value: widget.telemetry.gpsPhase)),
+1644-                                    const SizedBox(width: 8),
+1645-                                    Expanded(
+1646-                                        child: _SettingsReadout(
+1647-                                            label: 'ACCURACY',
+1648-                                            value:
+1649-                                                '±${widget.telemetry.accuracyM.toStringAsFixed(0)} m')),
+1650-                                    const SizedBox(width: 8),
+1651-                                    Expanded(
+1652-                                        child: _SettingsReadout(
+=== DRIVE DECK PANEL: DRIVE/PAGE/NAV TERMS ===
+1-import 'dart:async';
+2-import 'dart:math' as math;
+3-
+4-import 'package:flutter/material.dart';
+5-import 'package:google_maps_flutter/google_maps_flutter.dart';
+6-
+7-import '../../services/drive_telemetry_service.dart';
+8-import '../../services/drive_data_service.dart';
+9-import '../../services/head_unit_platform_service.dart';
+10-import '../../services/weather_service.dart';
+11-import '../camera/camera_awareness_service.dart';
+12-import '../camera/camera_models.dart';
+13-import '../camera/camera_repository.dart';
+14-
+15-class DriveDeckPanel extends StatefulWidget {
+16-  const DriveDeckPanel({
+17-    required this.telemetry,
+18:    required this.driveData,
+19-    required this.weather,
+20-    required this.platform,
+21-    required this.compact,
+22-    super.key,
+23-  });
+24-
+25-  final DriveTelemetryService telemetry;
+26:  final DriveDataService driveData;
+27-  final WeatherService weather;
+28-  final HeadUnitPlatformService platform;
+29-  final bool compact;
+30-
+31-  @override
+32-  State<DriveDeckPanel> createState() => _DriveDeckPanelState();
+33-}
+34-
+35-enum _MapLightingMode { day, night, tunnel }
+36-
+37-class _DriveDeckPanelState extends State<DriveDeckPanel> {
+38-  // Local JSON styling keeps daytime on Google's normal light map, while
+39-  // night/tunnel mode switches to a low-glare dark palette without requiring
+40-  // another Maps API or Map ID.
+41-  static const String _nightMapStyle = r'''[
+42-    {"elementType":"geometry","stylers":[{"color":"#1B2026"}]},
+43-    {"elementType":"labels.icon","stylers":[{"visibility":"on"}]},
+44-    {"elementType":"labels.text.fill","stylers":[{"color":"#BAC2CC"}]},
+45-    {"elementType":"labels.text.stroke","stylers":[{"color":"#11161B"}]},
+46-    {"featureType":"administrative","elementType":"geometry.stroke","stylers":[{"color":"#39414A"}]},
+47-    {"featureType":"landscape","elementType":"geometry","stylers":[{"color":"#1A2026"}]},
+48-    {"featureType":"poi","elementType":"geometry","stylers":[{"color":"#20272E"}]},
+49-    {"featureType":"poi.park","elementType":"geometry","stylers":[{"color":"#18271F"}]},
+50-    {"featureType":"road","elementType":"geometry","stylers":[{"color":"#2B3239"}]},
+51-    {"featureType":"road","elementType":"geometry.stroke","stylers":[{"color":"#161B20"}]},
+52-    {"featureType":"road.highway","elementType":"geometry","stylers":[{"color":"#3A444E"}]},
+53-    {"featureType":"road.highway","elementType":"geometry.stroke","stylers":[{"color":"#20262C"}]},
+54-    {"featureType":"transit","elementType":"geometry","stylers":[{"color":"#242C33"}]},
+55-    {"featureType":"water","elementType":"geometry","stylers":[{"color":"#101820"}]},
+56-    {"featureType":"water","elementType":"labels.text.fill","stylers":[{"color":"#71808E"}]}
+57-  ]''';
+58:  final PageController _pages = PageController();
+59-  late final OsmCameraRepository _cameraRepository;
+60-  late final CameraAwarenessService _cameraAwareness;
+61-  GoogleMapController? _mapController;
+62-  int _page = 0;
+63-  double _zoomOffset = 0;
+64-  bool? _mapsConfigured;
+65-  Timer? _uiRefreshTimer;
+66-  Timer? _cameraTimer;
+67-  Timer? _mapThemeTimer;
+68-  DateTime? _tunnelCandidateSince;
+69-  DateTime? _tunnelDarkUntil;
+70-  bool _solarNight = false;
+71-  bool _solarNightInitialized = false;
+72-  bool _tunnelDark = false;
+73-  bool _cameraUpdateInFlight = false;
+74-  DateTime? _lastCameraTick;
+75-  DateTime? _lastHeadingSampleAt;
+76-  DateTime? _zoomOutHoldUntil;
+77-  DateTime? _lowSpeedDetailSince;
+78-  double? _cameraLat;
+79-  double? _cameraLon;
+80-  double? _cameraBearing;
+81-  double? _cameraZoom;
+82-  double _lookAheadM = 0;
+83-  double? _lastHeadingSample;
+84-  double _turnRateDps = 0;
+85-
+86-  @override
+87-  void initState() {
+88-    super.initState();
+89-    _cameraRepository = OsmCameraRepository();
+90-    _cameraAwareness = CameraAwarenessService(_cameraRepository)
+91-      ..addListener(_onCameraAwarenessChanged);
+92-    unawaited(_initializeCameraAwareness());
+93-    widget.telemetry.addListener(_onTelemetry);
+94:    widget.driveData.addListener(_onDriveData);
+95-    _ensureMapThemeLoop();
+96-    unawaited(_loadMapsConfiguration());
+97-  }
+98-
+99-  Future<void> _loadMapsConfiguration() async {
+100-    final configured = await widget.platform.isGoogleMapsConfigured();
+101-    if (!mounted) return;
+102-    setState(() => _mapsConfigured = configured);
+103-    if (configured) {
+104-      _ensureAdaptiveCameraLoop();
+105-      unawaited(_snapCameraToTelemetry());
+106-    }
+107-  }
+108-
+109-  @override
+110-  void didUpdateWidget(covariant DriveDeckPanel oldWidget) {
+111-    super.didUpdateWidget(oldWidget);
+112-    if (oldWidget.telemetry != widget.telemetry) {
+113-      oldWidget.telemetry.removeListener(_onTelemetry);
+114-      widget.telemetry.addListener(_onTelemetry);
+115-    }
+116:    if (oldWidget.driveData != widget.driveData) {
+117:      oldWidget.driveData.removeListener(_onDriveData);
+118:      widget.driveData.addListener(_onDriveData);
+119-    }
+120-    if (oldWidget.platform != widget.platform) {
+121-      _mapsConfigured = null;
+122-      unawaited(_loadMapsConfiguration());
+123-    }
+124-  }
+125-
+126-  @override
+127-  void dispose() {
+128-    widget.telemetry.removeListener(_onTelemetry);
+129:    widget.driveData.removeListener(_onDriveData);
+130-    _cameraAwareness.removeListener(_onCameraAwarenessChanged);
+131-    _cameraAwareness.dispose();
+132-    _uiRefreshTimer?.cancel();
+133-    _cameraTimer?.cancel();
+134-    _mapThemeTimer?.cancel();
+135-    _mapController?.dispose();
+136-    _pages.dispose();
+137-    super.dispose();
+138-  }
+139-
+140-  double _distanceApproxM(double lat1, double lon1, double lat2, double lon2) {
+141-    const earth = 6371000.0;
+142-    final p1 = lat1 * math.pi / 180;
+143-    final p2 = lat2 * math.pi / 180;
+144-    final dp = (lat2 - lat1) * math.pi / 180;
+145-    final dl = (lon2 - lon1) * math.pi / 180;
+146-    final a = math.sin(dp / 2) * math.sin(dp / 2) +
+147-        math.cos(p1) * math.cos(p2) * math.sin(dl / 2) * math.sin(dl / 2);
+148-    return earth * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+149-  }
+150-
+151-  LatLng _projectPoint(
+152-    double latitude,
+153-    double longitude,
+154-    double bearingDeg,
+155-    double distanceM,
+156-  ) {
+157-    if (!distanceM.isFinite || distanceM.abs() < 0.01) {
+158-      return LatLng(latitude, longitude);
+159-    }
+160-    const earth = 6371000.0;
+161-    final angularDistance = distanceM / earth;
+162-    final bearing = bearingDeg * math.pi / 180;
+163-    final lat1 = latitude * math.pi / 180;
+164-    final lon1 = longitude * math.pi / 180;
+165-    final lat2 = math.asin(
+166-      math.sin(lat1) * math.cos(angularDistance) +
+167-          math.cos(lat1) * math.sin(angularDistance) * math.cos(bearing),
+168-    );
+169-    final lon2 = lon1 +
+170-        math.atan2(
+171-          math.sin(bearing) * math.sin(angularDistance) * math.cos(lat1),
+172-          math.cos(angularDistance) - math.sin(lat1) * math.sin(lat2),
+173-        );
+174-    return LatLng(lat2 * 180 / math.pi, lon2 * 180 / math.pi);
+175-  }
+176-
+177-  double _shortestAngleDelta(double from, double to) =>
+178-      (to - from + 540) % 360 - 180;
+179-
+180-  double _expBlend(double current, double target, double dt, double tau) {
+181-    if (!current.isFinite) return target;
+182-    final alpha = 1 - math.exp(-dt / math.max(0.01, tau));
+183-    return current + (target - current) * alpha;
+184-  }
+185-
+186-  double _lerp(double a, double b, double t) => a + (b - a) * t;
+187-
+188-  double _speedZoom(double speedKph) {
+189-    final speed = speedKph.clamp(0.0, 160.0).toDouble();
+190-    double zoom;
+191-    if (speed <= 10) {
+192-      zoom = 17.65;
+193-    } else if (speed <= 30) {
+194-      zoom = _lerp(17.65, 17.20, (speed - 10) / 20);
+195-    } else if (speed <= 60) {
+196-      zoom = _lerp(17.20, 16.48, (speed - 30) / 30);
+197-    } else if (speed <= 100) {
+198-      zoom = _lerp(16.48, 15.78, (speed - 60) / 40);
+199-    } else {
+200-      zoom = _lerp(15.78, 15.30, ((speed - 100) / 60).clamp(0.0, 1.0));
+201-    }
+202-    if (widget.compact) zoom -= 0.32;
+203-    return zoom;
+204-  }
+205-
+206-  double _desiredLookAheadM(double speedKph) {
+207-    final speedMps = speedKph.clamp(0.0, 180.0).toDouble() / 3.6;
+208-    if (speedMps < 1.5) return 0;
+209-    var secondsAhead = _turnRateDps >= 8.0 ? 1.10 : 1.55;
+--
+482-    );
+483-  }
+484-
+485-  void _onTelemetry() {
+486-    if (!mounted) return;
+487-    _sampleDrivingContext(DateTime.now());
+488-    _feedCameraAwareness();
+489-    _evaluateMapLighting();
+490-    _ensureAdaptiveCameraLoop();
+491-
+492-    // Readouts only need dashboard-rate refresh. The GoogleMap itself is moved
+493-    // by the dedicated camera loop, so the PlatformView is not rebuilt at the
+494-    // 25 Hz speed-engine rate.
+495-    if (_uiRefreshTimer != null) return;
+496-    _uiRefreshTimer = Timer(const Duration(milliseconds: 100), () {
+497-      _uiRefreshTimer = null;
+498-      if (mounted) setState(() {});
+499-    });
+500-  }
+501-
+502:  void _onDriveData() {
+503-    if (mounted && _page == 1) setState(() {});
+504-  }
+505-
+506-  void _ensureAdaptiveCameraLoop() {
+507-    if (_cameraTimer != null) return;
+508-    _lastCameraTick = DateTime.now();
+509-    _cameraTimer = Timer.periodic(
+510-      const Duration(milliseconds: 40),
+511-      (_) => unawaited(_adaptiveCameraTick()),
+512-    );
+513-  }
+514-
+515-  Future<void> _snapCameraToTelemetry() async {
+516-    final controller = _mapController;
+517-    final t = widget.telemetry;
+518-    if (controller == null || !t.hasMapLocation || _mapsConfigured != true) {
+519-      return;
+520-    }
+521-    final now = DateTime.now();
+522-    final point = _predictedVehiclePosition(t);
+523-    _cameraLat = point.latitude;
+524-    _cameraLon = point.longitude;
+525-    _cameraBearing = (t.heading % 360 + 360) % 360;
+526-    _cameraZoom = _adaptiveZoomTarget(now);
+527-    final desiredLookAhead = _desiredLookAheadM(t.displaySpeedKph);
+528-    final mpp = _metersPerPixel(point.latitude, _cameraZoom!);
+529-    final maxLookAhead = mpp * (widget.compact ? 54.0 : 68.0);
+530-    _lookAheadM = math.min(desiredLookAhead, maxLookAhead);
+531-    final cameraTarget = _projectPoint(
+532-      point.latitude,
+533-      point.longitude,
+534-      _cameraBearing!,
+535-      _lookAheadM,
+536-    );
+537-    _lastCameraTick = now;
+538-    await controller.moveCamera(
+539-      CameraUpdate.newCameraPosition(
+540-        CameraPosition(
+541-          target: cameraTarget,
+542-          zoom: _cameraZoom!,
+543-          bearing: _cameraBearing!,
+544-        ),
+545-      ),
+546-    );
+547-  }
+548-
+549-  Future<void> _adaptiveCameraTick() async {
+550-    if (_cameraUpdateInFlight || _page != 0) return;
+551-    final controller = _mapController;
+552-    final t = widget.telemetry;
+553-    if (controller == null || _mapsConfigured != true || !t.hasMapLocation) {
+554-      return;
+555-    }
+556-
+557-    final now = DateTime.now();
+558-    final previousTick = _lastCameraTick ?? now;
+559-    final dt = (now.difference(previousTick).inMicroseconds / 1000000.0)
+560-        .clamp(0.02, 0.14)
+561-        .toDouble();
+562-    _lastCameraTick = now;
+563-
+564-    final predicted = _predictedVehiclePosition(t);
+565-    final currentLat = _cameraLat ?? predicted.latitude;
+566-    final currentLon = _cameraLon ?? predicted.longitude;
+567-    final jumpM = _distanceApproxM(
+568-      currentLat,
+569-      currentLon,
+570-      predicted.latitude,
+571-      predicted.longitude,
+572-    );
+573-    final positionTau = switch (t.gpsState) {
+574-      GpsState.coasting => 0.34,
+575-      GpsState.weak => 0.24,
+576-      _ => 0.16,
+577-    };
+578-    final correctionTau = jumpM > 100 ? 0.07 : positionTau;
+579-    _cameraLat = _expBlend(currentLat, predicted.latitude, dt, correctionTau);
+580-    _cameraLon = _expBlend(currentLon, predicted.longitude, dt, correctionTau);
+581-
+582-    final targetBearing = (t.heading % 360 + 360) % 360;
+--
+617-      _cameraUpdateInFlight = false;
+618-    }
+619-  }
+620-
+621-  Future<void> _changeZoom(double delta) async {
+622-    _zoomOffset = (_zoomOffset + delta).clamp(-2.0, 2.0).toDouble();
+623-    if (mounted) setState(() {});
+624-  }
+625-
+626-  @override
+627-  Widget build(BuildContext context) {
+628-    return Container(
+629-      decoration: BoxDecoration(
+630-        color: const Color(0xFF0D1117),
+631-        borderRadius: BorderRadius.circular(20),
+632-        border: Border.all(color: const Color(0xFF30343B)),
+633-      ),
+634-      clipBehavior: Clip.antiAlias,
+635-      child: Stack(
+636-        children: <Widget>[
+637:          PageView(
+638-            controller: _pages,
+639-            onPageChanged: (index) => setState(() => _page = index),
+640-            children: <Widget>[
+641-              _mapPage(),
+642-              _drivePage(),
+643-            ],
+644-          ),
+645-          Positioned(
+646-            left: widget.compact ? 20 : 26,
+647-            right: widget.compact ? 20 : 26,
+648-            top: widget.compact ? 11 : 15,
+649-            child: IgnorePointer(
+650-              child: Row(
+651-                children: <Widget>[
+652-                  Text(
+653-                    'LIVE MAP',
+654-                    style: TextStyle(
+655-                      color: _page == 0
+656-                          ? const Color(0xFF39BFF0)
+657-                          : const Color(0xFF6D737D),
+658-                      fontSize: widget.compact ? 13 : 16,
+659-                      fontWeight: FontWeight.w700,
+660-                      letterSpacing: 0.4,
+661-                    ),
+662-                  ),
+663-                  const Spacer(),
+664-                  Row(
+665-                    children: List<Widget>.generate(
+666-                      2,
+667-                      (index) => Container(
+668-                        width: index == _page ? 8 : 7,
+669-                        height: index == _page ? 8 : 7,
+670-                        margin: const EdgeInsets.symmetric(horizontal: 5),
+671-                        decoration: BoxDecoration(
+672-                          shape: BoxShape.circle,
+673-                          color: index == _page
+674-                              ? const Color(0xFF39BFF0)
+675-                              : const Color(0xFF5F6670),
+676-                        ),
+677-                      ),
+678-                    ),
+679-                  ),
+680-                  const Spacer(),
+681-                  Text(
+682:                    'DRIVE DATA',
+683-                    style: TextStyle(
+684-                      color: _page == 1
+685-                          ? const Color(0xFF39BFF0)
+686-                          : const Color(0xFF777C85),
+687-                      fontSize: widget.compact ? 13 : 16,
+688-                      fontWeight: FontWeight.w600,
+689-                      letterSpacing: 0.4,
+690-                    ),
+691-                  ),
+692-                ],
+693-              ),
+694-            ),
+695-          ),
+696-        ],
+697-      ),
+698-    );
+699-  }
+700-
+701-  Widget _mapPage() {
+702-    final t = widget.telemetry;
+703-    if (_mapsConfigured == null) {
+704-      return _MapUnavailable(
+705-        compact: widget.compact,
+706-        title: 'CHECKING GOOGLE MAPS',
+707-        detail: 'Reading the Android Maps configuration…',
+708-      );
+709-    }
+710-    if (_mapsConfigured != true) {
+711-      return _MapUnavailable(
+712-        compact: widget.compact,
+713-        title: 'GOOGLE MAPS KEY REQUIRED',
+714-        detail: 'Set MAPS_API_KEY, then rebuild the Android APK.',
+715-      );
+716-    }
+717-    if (!t.hasMapLocation) {
+718-      return _MapUnavailable(
+719-        compact: widget.compact,
+720-        title: t.gpsState == GpsState.signalLost
+721-            ? 'GPS SIGNAL LOST'
+722-            : 'WAITING FOR GPS',
+723-        detail: t.gpsStatusLabel,
+724-      );
+725-    }
+726-
+727-    final target = LatLng(t.latitude, t.longitude);
+728-    final cameraAlert = _cameraAwareness.snapshot;
+729-    return Stack(
+730-      children: <Widget>[
+731-        Positioned.fill(
+732-          child: GoogleMap(
+733-            style: _activeMapStyle,
+734-            initialCameraPosition: CameraPosition(
+735-              target: target,
+736-              zoom: _speedZoom(t.displaySpeedKph) + _zoomOffset,
+737-              bearing: t.heading,
+738-            ),
+739-            onMapCreated: (controller) {
+740-              _mapController = controller;
+741-              _ensureAdaptiveCameraLoop();
+742-              unawaited(_snapCameraToTelemetry());
+743-            },
+744-            myLocationButtonEnabled: false,
+745-            compassEnabled: false,
+746-            zoomControlsEnabled: false,
+747-            mapToolbarEnabled: false,
+748-            trafficEnabled: true,
+749-            // Deliberately disable map gestures in the dashboard card so a
+750-            // horizontal drag always changes pages. A tap-to-expand map can be
+751-            // added later for parked interaction without gesture conflicts.
+752-            scrollGesturesEnabled: false,
+753-            zoomGesturesEnabled: false,
+754-            rotateGesturesEnabled: false,
+755-            tiltGesturesEnabled: false,
+756-          ),
+757-        ),
+758-        Positioned.fill(
+759-          child: IgnorePointer(
+760-            child: Center(
+761-              child: Transform.translate(
+762-                offset: Offset(0, _vehiclePointerOffsetY),
+--
+886-              ),
+887-            ),
+888-          ),
+889-        Positioned(
+890-          left: 0,
+891-          right: 0,
+892-          bottom: 0,
+893-          child: _MapReadout(
+894-            heading: t.compassLabel,
+895-            speed: t.speedKph.round(),
+896-            accuracy: t.accuracyM.round(),
+897-            gpsStatus: t.gpsPhase,
+898-          ),
+899-        ),
+900-      ],
+901-    );
+902-  }
+903-
+904-  Widget _drivePage() {
+905-    final t = widget.telemetry;
+906:    final d = widget.driveData;
+907-    return Padding(
+908-      padding: EdgeInsets.fromLTRB(
+909-        widget.compact ? 10 : 14,
+910-        widget.compact ? 38 : 46,
+911-        widget.compact ? 10 : 14,
+912-        widget.compact ? 10 : 14,
+913-      ),
+914-      child: Column(
+915-        children: <Widget>[
+916-          Expanded(
+917-            child: Row(
+918-              children: <Widget>[
+919-                Expanded(
+920-                  child: _DeckStat(
+921-                    label: 'ODO',
+922-                    value: d.odometerKm == null
+923-                        ? 'SET'
+924-                        : d.odometerKm!.toStringAsFixed(1),
+925-                    detail: d.odometerKm == null
+926-                        ? 'Settings → Vehicle'
+927-                        : 'km • SC Drive estimate',
+928-                    icon: Icons.speed_rounded,
+929-                  ),
+930-                ),
+931-                const _VerticalRule(),
+932-                Expanded(
+933-                  child: _DeckStat(
+934-                    label: 'TRIP A',
+935-                    value: d.tripDistanceKm.toStringAsFixed(1),
+936-                    detail: 'km',
+937-                    icon: Icons.route_rounded,
+938-                  ),
+939-                ),
+940-                const _VerticalRule(),
+941-                Expanded(
+942-                  child: _DeckStat(
+943-                    label: 'DRIVE TIME',
+944-                    value: _formatDuration(d.drivingTime),
+945-                    detail: 'moving',
+946-                    icon: Icons.timer_outlined,
+947-                  ),
+948-                ),
+949-                const _VerticalRule(),
+950-                Expanded(
+951-                  child: _DeckStat(
+952-                    label: 'STOP TIME',
+953-                    value: _formatDuration(d.stoppedTime),
+954-                    detail: t.gpsStatusLabel,
+955-                    icon: Icons.pause_circle_outline_rounded,
+956-                  ),
+957-                ),
+958-              ],
+959-            ),
+960-          ),
+961-          Container(height: 1, color: const Color(0xFF242D38)),
+962-          Expanded(
+963-            child: Row(
+964-              children: <Widget>[
+965-                Expanded(
+966-                  child: _DeckStat(
+967-                    label: 'AVG SPEED',
+968-                    value: d.averageSpeedKph.round().toString(),
+969-                    detail: 'km/h moving',
+970-                    icon: Icons.av_timer_rounded,
+971-                  ),
+972-                ),
+973-                const _VerticalRule(),
+974-                Expanded(
+975-                  child: _DeckStat(
+976-                    label: 'MAX SPEED',
+977-                    value: d.maxSpeedKph.round().toString(),
+978-                    detail: 'km/h Trip A',
+979-                    icon: Icons.trending_up_rounded,
+980-                  ),
+981-                ),
+982-                const _VerticalRule(),
+983-                Expanded(
+984-                  child: _DeckStat(
+985-                    label: 'PEAK +G',
+986-                    value: '+${d.peakAccelG.toStringAsFixed(2)}',
+=== HEAD UNIT CLASSES ===
+50:class _HeadUnitScreenState extends State<HeadUnitScreen> {
+243:class _TopBar extends StatelessWidget {
+372:class _InstrumentPanel extends StatefulWidget {
+382:class _InstrumentPanelState extends State<_InstrumentPanel>
+630:class _InstrumentMetric extends StatelessWidget {
+701:class _MediaPager extends StatefulWidget {
+716:class _MediaPagerState extends State<_MediaPager> {
+787:class _SpotifyPanel extends StatelessWidget {
+1019:class _PlayerButton extends StatelessWidget {
+1068:class _SpotifyCarButton extends StatelessWidget {
+1145:class _SpotifyDeviceDialog extends StatefulWidget {
+1154:class _SpotifyDeviceDialogState extends State<_SpotifyDeviceDialog> {
+1375:class _ScDriveSettingsDialog extends StatefulWidget {
+1392:class _ScDriveSettingsDialogState extends State<_ScDriveSettingsDialog> {
+1721:class _ObdSettingsSection extends StatefulWidget {
+1730:class _ObdSettingsSectionState extends State<_ObdSettingsSection> {
+2250:class _SettingsSection extends StatelessWidget {
+2291:class _SettingsReadout extends StatelessWidget {
+2330:class _WeatherTopChip extends StatelessWidget {
+2396:class _WeatherDetailsDialog extends StatelessWidget {
+2609:class _WeatherMetric extends StatelessWidget {
+2656:class _GaugeBackgroundPainter extends CustomPainter {
+=== DRIVE DECK CLASSES ===
+37:class _DriveDeckPanelState extends State<DriveDeckPanel> {
+1021:class _VehiclePointer extends StatelessWidget {
+1047:class _VehiclePointerPainter extends CustomPainter {
+1093:class _MapReadout extends StatelessWidget {
+1148:class _MapZoomControls extends StatelessWidget {
+1216:class _CameraAlertOverlay extends StatelessWidget {
+1338:class _CameraMetric extends StatelessWidget {
+1379:class _MapCompass extends StatelessWidget {
+1414:class _MapUnavailable extends StatelessWidget {
+1463:class _DeckStat extends StatelessWidget {
+1523:class _VerticalRule extends StatelessWidget {
+=== DRIVE DATA SERVICE PUBLIC GETTERS ===
+16:class DriveDataService extends ChangeNotifier {
+65:  bool get odometerCalibrated => _odometerOffsetKm != null;
+66:  double? get odometerKm => _odometerOffsetKm == null
+69:  double get tripDistanceKm => _tripDistanceKm;
+70:  Duration get drivingTime => Duration(seconds: _drivingSeconds.round());
+71:  Duration get stoppedTime => Duration(seconds: _stoppedSeconds.round());
+72:  double get maxSpeedKph => _maxSpeedKph;
+73:  double get peakAccelG => _peakAccelG;
+74:  double get peakBrakeG => _peakBrakeG;
+75:  double get currentLongitudinalG => _telemetry.filteredLongitudinalG;
+76:  int get moderateAccelEvents => _moderateAccelEvents;
+77:  int get hardAccelEvents => _hardAccelEvents;
+78:  int get severeAccelEvents => _severeAccelEvents;
+79:  int get moderateBrakeEvents => _moderateBrakeEvents;
+80:  int get hardBrakeEvents => _hardBrakeEvents;
+81:  int get severeBrakeEvents => _severeBrakeEvents;
+82:  int get significantAccelEvents => _hardAccelEvents + _severeAccelEvents;
+83:  int get significantBrakeEvents => _hardBrakeEvents + _severeBrakeEvents;
+85:  double get averageSpeedKph {
+=== TELEMETRY PUBLIC GETTERS ===
+187:  bool get permissionGranted => _permissionGranted;
+188:  bool get locationEnabled => _locationEnabled;
+189:  String? get errorMessage => _errorMessage;
+191:  double get speedKph => _speedKph;
+192:  double get rawGpsSpeedKph => _rawGpsSpeedKph;
+193:  double get predictedSpeedKph => _predictedSpeedKph;
+194:  double get estimatedSpeedKph => _estimatedSpeedKph;
+195:  double get displaySpeedKph => _displaySpeedKph;
+196:  double get accelerationMps2 => _accelerationMps2;
+197:  double get forwardAccelerationMps2 => _forwardAccelerationMps2;
+198:  double get rawForwardAccelerationMps2 => _rawForwardAccelerationMps2;
+199:  double get rawAccelMps2 => _rawAccelMps2;
+200:  double get rawAccelX => _rawAccelX;
+201:  double get rawAccelY => _rawAccelY;
+202:  double get rawAccelZ => _rawAccelZ;
+203:  double get gravityX => _gravityX;
+204:  double get gravityY => _gravityY;
+205:  double get gravityZ => _gravityZ;
+206:  double get linearAccelX => _linearAccelX;
+207:  double get linearAccelY => _linearAccelY;
+208:  double get linearAccelZ => _linearAccelZ;
+209:  double get lateralAccelerationMps2 => _lateralAccelerationMps2;
+210:  double get verticalAccelerationMps2 => _verticalAccelerationMps2;
+211:  double get longitudinalG => _longitudinalG;
+212:  double get filteredLongitudinalG => _filteredLongitudinalG;
+213:  double get lateralG => _lateralG;
+214:  double get verticalG => _verticalG;
+215:  double get velocityDerivedAccelerationMps2 => _velocityDerivedAccelerationMps2;
+216:  double get velocityDerivedG => _velocityDerivedG;
+217:  double get tripPeakPositiveG => _tripPeakPositiveG;
+218:  double get tripPeakNegativeG => _tripPeakNegativeG;
+219:  double get dynamicsConfidence => _dynamicsConfidence;
+220:  double get gDeadzone => _gDeadzone;
+221:  String get dynamicsEventState => _dynamicsEventState;
+222:  String get dynamicsClassification => _dynamicsClassification;
+223:  bool get impactSuppressed => _impactSuppressed;
+224:  int get moderateAccelEvents => _moderateAccelEvents;
+225:  int get hardAccelEvents => _hardAccelEvents;
+226:  int get severeAccelEvents => _severeAccelEvents;
+227:  int get moderateBrakeEvents => _moderateBrakeEvents;
+228:  int get hardBrakeEvents => _hardBrakeEvents;
+229:  int get severeBrakeEvents => _severeBrakeEvents;
+230:  int get lastDynamicsEventId => _lastDynamicsEventId;
+231:  String get lastDynamicsEventType => _lastDynamicsEventType;
+232:  String get lastDynamicsEventSeverity => _lastDynamicsEventSeverity;
+233:  double get lastDynamicsEventPeakG => _lastDynamicsEventPeakG;
+234:  double get lastDynamicsEventAverageG => _lastDynamicsEventAverageG;
+235:  int get lastDynamicsEventDurationMs => _lastDynamicsEventDurationMs;
+236:  double get lastDynamicsEventStartSpeedKph => _lastDynamicsEventStartSpeedKph;
+237:  double get lastDynamicsEventEndSpeedKph => _lastDynamicsEventEndSpeedKph;
+238:  double get lastDynamicsEventSpeedDeltaKph => _lastDynamicsEventSpeedDeltaKph;
+239:  double get lastDynamicsEventLatitude => _lastDynamicsEventLatitude;
+240:  double get lastDynamicsEventLongitude => _lastDynamicsEventLongitude;
+241:  double get lastDynamicsEventLocationConfidence => _lastDynamicsEventLocationConfidence;
+242:  double get lastDynamicsEventConfidence => _lastDynamicsEventConfidence;
+243:  double get gpsRateHz => _gpsRateHz;
+244:  double get requestedGpsRateHz => _requestedGpsRateHz;
+245:  double get gpsMedianRateHz => _gpsMedianRateHz;
+246:  double get gpsMinRateHz => _gpsMinRateHz;
+247:  double get gpsMaxRateHz => _gpsMaxRateHz;
+248:  double get gpsMeanIntervalMs => _gpsMeanIntervalMs;
+249:  double get gpsMedianIntervalMs => _gpsMedianIntervalMs;
+250:  double get gpsJitterMs => _gpsJitterMs;
+251:  int get gpsRateSampleCount => _gpsRateSampleCount;
+252:  String get gpsRateStatus => _gpsRateStatus;
+253:  String get gpsQuality => _gpsQuality;
+254:  String get gnssProvider => _gnssProvider;
+255:  double get positionDerivedSpeedKph => _positionDerivedSpeedKph;
+256:  double get bearingAccuracyDeg => _bearingAccuracyDeg;
+257:  double get gpsAgeMs => _gpsAgeMs;
+258:  double get speedAccuracyMps => _speedAccuracyMps;
+259:  double get gpsConfidence => _gpsConfidence;
+260:  double get imuRateHz => _imuRateHz;
+261:  double get requestedImuRateHz => _requestedImuRateHz;
+262:  double get imuMeanIntervalMs => _imuMeanIntervalMs;
+263:  double get imuMedianIntervalMs => _imuMedianIntervalMs;
+264:  double get imuJitterMs => _imuJitterMs;
+265:  int get imuRateSampleCount => _imuRateSampleCount;
+266:  double get imuSampleAgeMs => _imuSampleAgeMs;
+267:  double get imuConfidence => _imuConfidence;
+268:  double get imuOrientationConfidence => _imuOrientationConfidence;
+269:  int get imuCalibrationSamples => _imuCalibrationSamples;
+270:  double get imuNoiseFloorG => _imuNoiseFloorG;
+271:  String get gravityCompensationMode => _gravityCompensationMode;
+272:  bool get mountMovementSuspected => _mountMovementSuspected;
+273:  bool get sensorSaturated => _sensorSaturated;
+274:  double get engineRateHz => _engineRateHz;
+275:  double get filterGain => _filterGain;
+276:  double get nativeProcessingMs => _nativeProcessingMs;
+277:  double get bridgeLatencyMs => _bridgeLatencyMs;
+278:  bool get imuAvailable => _imuAvailable;
+279:  bool get imuCalibrated => _imuCalibrated;
+280:  bool get isStale => _isStale;
+281:  String get vehicleState => _vehicleState;
+282:  String get velocityState => _velocityState;
+283:  String get gpsPhase => _gpsPhase;
+284:  bool get isStationary => _isStationary;
+285:  bool get powerSaveMode => _powerSaveMode;
+286:  String get locationPowerSaveMode => _locationPowerSaveMode;
+287:  String? get speedLogPath => _speedLogPath;
+288:  int get gnssMeasurementTimestampNs => _gnssMeasurementTimestampNs;
+289:  int get gnssReceivedTimestampNs => _gnssReceivedTimestampNs;
+290:  double get gnssTransportLatencyMs => _gnssTransportLatencyMs;
+291:  double get gnssAlignedInnovationMps => _gnssAlignedInnovationMps;
+292:  double get observationBufferSeconds => _observationBufferSeconds;
+293:  int get observationSpeedSamples => _observationSpeedSamples;
+294:  int get observationMotionSamples => _observationMotionSamples;
+295:  int get observationEstimateSamples => _observationEstimateSamples;
+296:  String get learningStage => _learningStage;
+297:  String get learningStatus => _learningStatus;
+298:  double get learningConfidence => _learningConfidence;
+299:  bool get learningEligible => _learningEligible;
+300:  String get learningRejectReason => _learningRejectReason;
+301:  int get learningAcceptedEvents => _learningAcceptedEvents;
+302:  int get learningRejectedEvents => _learningRejectedEvents;
+303:  int get lastLearningEventId => _lastLearningEventId;
+304:  int get lastLearningGnssSamples => _lastLearningGnssSamples;
+305:  int get lastLearningImuSamples => _lastLearningImuSamples;
+306:  double get lastLearningAlignedErrorMps => _lastLearningAlignedErrorMps;
+307:  int get activeProfileVersion => _activeProfileVersion;
+308:  int get candidateProfileVersion => _candidateProfileVersion;
+309:  int get lastKnownGoodProfileVersion => _lastKnownGoodProfileVersion;
+310:  String get shadowStatus => _shadowStatus;
+311:  double get currentModelScore => _currentModelScore;
+312:  double get candidateModelScore => _candidateModelScore;
+313:  String get adaptiveProfileHealth => _adaptiveProfileHealth;
+314:  double get adaptiveSensorConfidence => _adaptiveSensorConfidence;
+315:  int get learnedGnssSamples => _learnedGnssSamples;
+316:  double get learnedGnssRateHz => _learnedGnssRateHz;
+317:  double get learnedGnssLatencyMs => _learnedGnssLatencyMs;
+318:  double get learnedGnssJitterMs => _learnedGnssJitterMs;
+319:  int get learnedImuSamples => _learnedImuSamples;
+320:  double get learnedImuRateHz => _learnedImuRateHz;
+321:  double get learnedImuNoiseFloorG => _learnedImuNoiseFloorG;
+322:  double get learnedOrientationConfidence => _learnedOrientationConfidence;
+323:  double get heading => _heading;
+324:  double get accuracyM => _accuracyM;
+325:  double get latitude => _latitude;
+326:  double get longitude => _longitude;
+327:  bool get hasLocationFix => _hasLocationFix;
+328:  bool get hasFreshLocationFix =>
+330:  bool get hasMapLocation =>
+335:  bool get hasUsableSpeedEstimate =>
+342:  double get estimatedRpm => _estimatedRpm;
+343:  double get estimatedCvtRatio => _estimatedCvtRatio;
+345:  bool get gpsReady => hasFreshLocationFix;
+347:  String get gpsStatusLabel => switch (_gpsState) {
+840:  String get compassLabel {
