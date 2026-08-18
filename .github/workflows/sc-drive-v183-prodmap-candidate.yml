@@ -44,7 +44,7 @@ jobs:
           grep -n '^version: 1.8.3+29' scdrive-app/pubspec.yaml
           (cd scdrive-app && sha256sum -c /tmp/v181-physics-authority.sha256)
 
-      - name: Harden camera repository refresh policy
+      - name: Harden Camera Engine and align map controls
         shell: bash
         run: |
           set -euxo pipefail
@@ -53,37 +53,106 @@ jobs:
           import re
 
           repo = Path('scdrive-app/lib/features/camera/camera_repository.dart')
-          s = repo.read_text()
-          pattern = re.compile(
+          r = repo.read_text()
+          refresh_pattern = re.compile(
               r'if\s*\(\s*_records\.isEmpty\s*\|\|\s*centerLat\s*==\s*null\s*\|\|\s*centerLon\s*==\s*null\s*\|\|\s*synced\s*==\s*null\s*\)\s*\{',
               re.MULTILINE,
           )
           replacement = 'if (centerLat == null || centerLon == null || synced == null) {'
-          if pattern.search(s):
-              s = pattern.sub(replacement, s, count=1)
-          elif '_records.isEmpty' in s:
+          if refresh_pattern.search(r):
+              r = refresh_pattern.sub(replacement, r, count=1)
+          elif '_records.isEmpty' in r:
               raise SystemExit('camera repository refresh gate shape changed unexpectedly')
-          elif 'centerLat == null' not in s or 'centerLon == null' not in s or 'synced == null' not in s:
+          elif not all(x in r for x in ('centerLat == null', 'centerLon == null', 'synced == null')):
               raise SystemExit('camera repository refresh gate missing')
-          repo.write_text(s)
+
+          if 'void dispose();' not in r:
+              marker = '  Future<void> refreshAround(double latitude, double longitude);\n'
+              if marker not in r:
+                  raise SystemExit('CameraRepository refreshAround interface marker missing')
+              r = r.replace(marker, marker + '  void dispose();\n', 1)
+          if '  void dispose() {\n    _client.close();\n  }' in r and '  @override\n  void dispose()' not in r:
+              r = r.replace(
+                  '  void dispose() {\n    _client.close();\n  }',
+                  '  @override\n  void dispose() {\n    _client.close();\n  }',
+                  1,
+              )
+          repo.write_text(r)
 
           service = Path('scdrive-app/lib/features/camera/camera_awareness_service.dart')
           s = service.read_text()
+          if 'final OsmCameraRepository repository;' in s:
+              s = s.replace('final OsmCameraRepository repository;', 'final CameraRepository repository;', 1)
+          elif 'final CameraRepository repository;' not in s:
+              raise SystemExit('CameraAwarenessService repository type marker missing')
           if 'const Duration(seconds: 30)' in s:
               s = s.replace('const Duration(seconds: 30)', 'const Duration(minutes: 2)', 1)
           elif 'const Duration(minutes: 2)' not in s:
               raise SystemExit('camera network retry interval shape changed unexpectedly')
           service.write_text(s)
+
+          panel = Path('scdrive-app/lib/features/head_unit/drive_deck_panel.dart')
+          p = panel.read_text()
+          alert_marker = '        Positioned(\n          right: widget.compact ? 12 : 16,\n          top: widget.compact ? 48 : 58,\n          child: _CameraAlertOverlay('
+          camera_gate = p.find('cameraAlert.shouldRender')
+          alert_pos = p.find(alert_marker)
+          if camera_gate < 0 or alert_pos < 0:
+              raise SystemExit('camera overlay/control markers missing')
+          group_start = p.rfind('        AnimatedPositioned(', 0, camera_gate)
+          if group_start < 0 or group_start > alert_pos:
+              raise SystemExit('camera compass control group start missing')
+          group = p[group_start:alert_pos]
+          if '_MapCompass' in group and '_MapZoomControls' in group:
+              controls = '''        Positioned(
+          right: widget.compact ? 12 : 16,
+          bottom: widget.compact ? 56 : 68,
+          child: _MapZoomControls(
+            compact: widget.compact,
+            onZoomIn: () => unawaited(_changeZoom(0.8)),
+            onZoomOut: () => unawaited(_changeZoom(-0.8)),
+          ),
+        ),
+        AnimatedPositioned(
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOutCubic,
+          right: widget.compact ? 12 : 16,
+          top: cameraAlert.shouldRender
+              ? (widget.compact ? 176 : 202)
+              : (widget.compact ? 62 : 74),
+          child: _MapCompass(
+            label: t.compassLabel,
+            compact: widget.compact,
+          ),
+        ),
+'''
+              p = p[:group_start] + controls + p[alert_pos:]
+          else:
+              before_alert = p[max(0, alert_pos - 1600):alert_pos]
+              if '_MapCompass' not in before_alert or '_MapZoomControls' not in before_alert or 'bottom:' not in before_alert:
+                  raise SystemExit('map controls are neither grouped nor already separated')
+          panel.write_text(p)
           PY
+
           dart format \
             scdrive-app/lib/features/camera/camera_repository.dart \
-            scdrive-app/lib/features/camera/camera_awareness_service.dart
+            scdrive-app/lib/features/camera/camera_awareness_service.dart \
+            scdrive-app/lib/features/head_unit/drive_deck_panel.dart
+
           python3 - <<'PY'
           from pathlib import Path
           r = Path('scdrive-app/lib/features/camera/camera_repository.dart').read_text()
           s = Path('scdrive-app/lib/features/camera/camera_awareness_service.dart').read_text()
-          assert '_records.isEmpty' not in r, 'empty camera result must remain a valid synced cache'
-          assert 'Duration(minutes: 2)' in s, 'network refresh floor must be two minutes'
+          p = Path('scdrive-app/lib/features/head_unit/drive_deck_panel.dart').read_text()
+          assert '_records.isEmpty' not in r, 'successful empty camera result must remain a valid cache'
+          assert 'void dispose();' in r, 'CameraRepository must own lifecycle contract'
+          assert 'final CameraRepository repository;' in s, 'Camera engine must depend on repository interface'
+          assert 'final OsmCameraRepository repository;' not in s, 'Camera engine must not be locked to OSM implementation'
+          assert 'Duration(minutes: 2)' in s, 'network retry floor must be two minutes'
+          gate = p.index('cameraAlert.shouldRender')
+          alert = p.index('child: _CameraAlertOverlay')
+          controls = p[p.rfind('Positioned(', 0, gate):alert]
+          assert '_MapZoomControls' in controls and 'bottom:' in controls, 'zoom must remain at lower-right'
+          assert '_MapCompass' in controls and 'AnimatedPositioned' in controls, 'compass must shift below visible alert'
           PY
           (cd scdrive-app && sha256sum -c /tmp/v181-physics-authority.sha256)
 
