@@ -1,0 +1,115 @@
+name: Build SC Drive v1.8.3 Camera Production Maps Candidate
+
+on:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - '.github/workflows/sc-drive-v183-prodmap-candidate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+
+      - name: Reconstruct exact v1.8.2 source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android-final"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v182-final-sign.yml 'Reconstruct exact v1.8.2 source' >/tmp/v183-reconstruct.sh
+          bash /tmp/v183-reconstruct.sh
+          grep -n '^version: 1.8.2+28' scdrive-app/pubspec.yaml
+          (cd scdrive-app && sha256sum -c /tmp/v181-physics-authority.sha256)
+
+      - name: Apply v1.8.3 Camera Awareness overlay
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v183-camera.yml 'Apply v1.8.3 Camera Awareness overlay' >/tmp/v183-apply.sh
+          bash /tmp/v183-apply.sh
+          grep -n '^version: 1.8.3+29' scdrive-app/pubspec.yaml
+          (cd scdrive-app && sha256sum -c /tmp/v181-physics-authority.sha256)
+
+      - name: Require production Maps secret
+        shell: bash
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$GOOGLE_MAPS_API_KEY" || { echo '::error::Missing GOOGLE_MAPS_API_KEY'; exit 2; }
+          echo 'Production Maps key is present.'
+
+      - name: Resolve dependencies
+        working-directory: scdrive-app
+        run: |
+          rm -f "$PUB_CACHE/credentials.json" "$HOME/.pub-cache/credentials.json" || true
+          flutter pub get
+
+      - name: Android unit tests
+        working-directory: scdrive-app/android
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Strict Flutter analyze
+        working-directory: scdrive-app
+        run: flutter analyze --no-fatal-infos
+
+      - name: Build release candidate with production Maps
+        working-directory: scdrive-app
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: |
+          set -euxo pipefail
+          flutter build apk --release \
+            --dart-define=SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID:-}" \
+            --dart-define=SC_DRIVE_BUILD_PROFILE=production
+
+      - name: Verify and package for local permanent signing
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
+          mkdir -p out/build-tools/lib
+          cp "$APK" out/SC_Drive-v1.8.3-Camera-Awareness-PRODMAP-CANDIDATE.apk
+          cp "$BT/zipalign" out/build-tools/zipalign
+          cp "$BT/apksigner" out/build-tools/apksigner
+          cp "$BT/lib/apksigner.jar" out/build-tools/lib/apksigner.jar
+          cp "$BT/aapt" out/build-tools/aapt
+          chmod +x out/build-tools/zipalign out/build-tools/apksigner out/build-tools/aapt
+          unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'CAMERA AHEAD'
+          unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'OPENSTREETMAP'
+          unzip -p "$APK" classes.dex | strings | grep -F -m1 'SYSTEM_RADIO_APP'
+          "$BT/aapt" dump badging "$APK" | tee out/AAPT-BADGING.txt
+          grep -q "package: name='com.scdeport.scdrive'" out/AAPT-BADGING.txt
+          grep -q "versionCode='29'" out/AAPT-BADGING.txt
+          grep -q "versionName='1.8.3'" out/AAPT-BADGING.txt
+          sha256sum out/SC_Drive-v1.8.3-Camera-Awareness-PRODMAP-CANDIDATE.apk > out/CANDIDATE.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.8.3-Camera-Awareness-PRODMAP-CANDIDATE
+          path: out/**
+          if-no-files-found: error
+          retention-days: 14
