@@ -1,0 +1,51 @@
+name: Inspect SC Drive v1.8.2 Map Controls
+
+on:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - '.github/workflows/sc-drive-v183-inspect-map.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+      - name: Reconstruct exact v1.8.2 source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android-final"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v182-final-sign.yml 'Reconstruct exact v1.8.2 source' >/tmp/v183-base.sh
+          bash /tmp/v183-base.sh
+      - name: Publish exact map-control snippet
+        shell: bash
+        run: |
+          set -euxo pipefail
+          FILE=scdrive-app/lib/features/head_unit/drive_deck_panel.dart
+          mkdir -p build-status
+          {
+            echo '=== MAP ZOOM ==='
+            grep -n -B12 -A18 '_MapZoomControls' "$FILE" || true
+            echo '=== MAP COMPASS ==='
+            grep -n -B12 -A18 '_MapCompass' "$FILE" || true
+          } > build-status/sc-drive-v182-map-controls.txt
+          cat build-status/sc-drive-v182-map-controls.txt
+          git config user.name 'SC Drive Build Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add build-status/sc-drive-v182-map-controls.txt
+          git commit -m 'publish v1.8.2 map-control snippet [skip ci]'
+          git push origin HEAD:sc-drive-apk-build
