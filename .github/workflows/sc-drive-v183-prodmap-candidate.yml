@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -113,3 +113,26 @@ jobs:
           path: out/**
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish build pointer
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p build-status
+          APK_SHA=''
+          if [[ -f out/CANDIDATE.sha256 ]]; then APK_SHA=$(cut -d' ' -f1 out/CANDIDATE.sha256); fi
+          cat > build-status/sc-drive-v183-prodmap.txt <<EOF
+          STATUS=${{ job.status }}
+          RUN_ID=$GITHUB_RUN_ID
+          SOURCE_SHA=$GITHUB_SHA
+          ARTIFACT_NAME=SC-Drive-v1.8.3-Camera-Awareness-PRODMAP-CANDIDATE
+          APK_NAME=SC_Drive-v1.8.3-Camera-Awareness-PRODMAP-CANDIDATE.apk
+          APK_SHA256=$APK_SHA
+          EOF
+          git config user.name 'SC Drive Build Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add build-status/sc-drive-v183-prodmap.txt
+          git commit -m 'publish v1.8.3 prodmap candidate result [skip ci]' || true
+          git pull --rebase origin sc-drive-apk-build || true
+          git push origin HEAD:sc-drive-apk-build || true
