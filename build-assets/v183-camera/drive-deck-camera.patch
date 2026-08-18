@@ -84,7 +84,7 @@
      return Stack(
        children: <Widget>[
          Positioned.fill(
-@@ -773,16 +812,27 @@
+@@ -773,20 +812,32 @@
          ),
 -        Positioned(
 +        AnimatedPositioned(
