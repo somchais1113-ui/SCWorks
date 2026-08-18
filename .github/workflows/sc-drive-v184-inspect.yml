@@ -1,0 +1,61 @@
+name: Inspect SC Drive v1.8.3 UI Source
+
+on:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - '.github/workflows/sc-drive-v184-inspect.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+      - name: Reconstruct exact v1.8.2 source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android-final"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v182-final-sign.yml 'Reconstruct exact v1.8.2 source' >/tmp/base.sh
+          bash /tmp/base.sh
+      - name: Apply v1.8.3 Camera Awareness overlay
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p scdrive-app/lib/features/camera
+          cp build-assets/v183-camera/camera_models.dart scdrive-app/lib/features/camera/camera_models.dart
+          cp build-assets/v183-camera/camera_repository.dart scdrive-app/lib/features/camera/camera_repository.dart
+          cp build-assets/v183-camera/camera_awareness_service.dart scdrive-app/lib/features/camera/camera_awareness_service.dart
+          patch -d scdrive-app -p1 --forward --batch < build-assets/v183-camera/drive-deck-camera.patch
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('scdrive-app/pubspec.yaml')
+          s=p.read_text()
+          p.write_text(s.replace('version: 1.8.2+28','version: 1.8.3+29',1))
+          PY
+      - name: Inspect speed display and fonts
+        shell: bash
+        run: |
+          set -euxo pipefail
+          echo '=== PUBSPEC FONTS ==='
+          grep -n -A30 -B5 'family: Nissan' scdrive-app/pubspec.yaml || true
+          echo '=== SPEED DISPLAY REFERENCES ==='
+          grep -n -B35 -A65 'displaySpeedKph' scdrive-app/lib/features/head_unit/head_unit_screen.dart || true
+          grep -n -B35 -A65 'speedKph' scdrive-app/lib/features/head_unit/head_unit_screen.dart | head -220 || true
+          echo '=== LARGE FONT SIZE CONTEXT ==='
+          grep -n -B50 -A80 'fontSize: widget.compact ? 113 : 151' scdrive-app/lib/features/head_unit/head_unit_screen.dart || true
+          echo '=== APP THEME FONT ==='
+          grep -n -B20 -A40 'fontFamily' scdrive-app/lib/app/app.dart | head -180 || true
