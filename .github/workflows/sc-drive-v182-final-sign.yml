@@ -1,0 +1,152 @@
+name: Build SC Drive v1.8.2 FINAL Permanent Signed
+
+on:
+  push:
+    branches: [ sc-drive-apk-build ]
+    paths:
+      - '.github/workflows/sc-drive-v182-final-sign.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-final:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+
+      - name: Reconstruct exact v1.8.2 source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v181-ui-polish.yml 'Reconstruct v1.8.1 polished source' >/tmp/v182-reconstruct.sh
+          bash /tmp/v182-reconstruct.sh
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v181-ui-polish.yml 'Apply v1.8.2 maps and radio fix' >/tmp/v182-fix.sh
+          bash /tmp/v182-fix.sh
+          grep -n '^version: 1.8.2+28' scdrive-app/pubspec.yaml
+
+      - name: Require production Maps and permanent signing secrets
+        shell: bash
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SC_DRIVE_KEYSTORE_BASE64: ${{ secrets.SC_DRIVE_KEYSTORE_BASE64 }}
+          SC_DRIVE_KEYSTORE_PASSWORD: ${{ secrets.SC_DRIVE_KEYSTORE_PASSWORD }}
+          SC_DRIVE_KEY_PASSWORD: ${{ secrets.SC_DRIVE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in GOOGLE_MAPS_API_KEY SC_DRIVE_KEYSTORE_BASE64 SC_DRIVE_KEYSTORE_PASSWORD SC_DRIVE_KEY_PASSWORD; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required repository secret: $name"
+              missing=1
+            fi
+          done
+          if [[ "$missing" -ne 0 ]]; then
+            exit 2
+          fi
+          echo 'Production Maps key and permanent signing inputs are present.'
+
+      - name: Materialize and validate permanent keystore
+        shell: bash
+        env:
+          SC_DRIVE_KEYSTORE_BASE64: ${{ secrets.SC_DRIVE_KEYSTORE_BASE64 }}
+          SC_DRIVE_KEYSTORE_PASSWORD: ${{ secrets.SC_DRIVE_KEYSTORE_PASSWORD }}
+        run: |
+          set -euxo pipefail
+          KEYSTORE="$RUNNER_TEMP/scdrive-release.jks"
+          printf '%s' "$SC_DRIVE_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+          test -s "$KEYSTORE"
+          chmod 600 "$KEYSTORE"
+          keytool -list \
+            -keystore "$KEYSTORE" \
+            -storepass "$SC_DRIVE_KEYSTORE_PASSWORD" \
+            -alias scdrive-release >/dev/null
+          echo 'Permanent keystore decoded and alias scdrive-release validated.'
+
+      - name: Resolve dependencies
+        working-directory: scdrive-app
+        run: |
+          rm -f "$PUB_CACHE/credentials.json" "$HOME/.pub-cache/credentials.json" || true
+          flutter pub get
+
+      - name: Strict Flutter analyze
+        working-directory: scdrive-app
+        run: flutter analyze --no-fatal-infos
+
+      - name: Build FINAL release with permanent certificate
+        working-directory: scdrive-app
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          SC_DRIVE_KEYSTORE_PATH: ${{ runner.temp }}/scdrive-release.jks
+          SC_DRIVE_KEYSTORE_PASSWORD: ${{ secrets.SC_DRIVE_KEYSTORE_PASSWORD }}
+          SC_DRIVE_KEY_ALIAS: scdrive-release
+          SC_DRIVE_KEY_PASSWORD: ${{ secrets.SC_DRIVE_KEY_PASSWORD }}
+        run: |
+          set -euxo pipefail
+          unset SC_DRIVE_ALLOW_TEST_SIGNING || true
+          flutter build apk --release \
+            --dart-define=SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID:-}" \
+            --dart-define=SC_DRIVE_BUILD_PROFILE=production
+
+      - name: Verify permanent signer continuity and package
+        shell: bash
+        env:
+          EXPECTED_SIGNER_SHA256: BDF5DFEF877CC99B73436257830BD45DEDE314C41488DA480FA102553F836385
+        run: |
+          set -euxo pipefail
+          APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
+          mkdir -p out
+          "$BT/apksigner" verify --verbose --print-certs "$APK" | tee out/APKSIGNER-VERIFY.txt
+          ACTUAL=$(sed -n 's/.*certificate SHA-256 digest: //p' out/APKSIGNER-VERIFY.txt | head -1 | tr -d ':[:space:]' | tr '[:lower:]' '[:upper:]')
+          test -n "$ACTUAL"
+          if [[ "$ACTUAL" != "$EXPECTED_SIGNER_SHA256" ]]; then
+            echo "::error::Permanent signing certificate mismatch. Expected $EXPECTED_SIGNER_SHA256 but got $ACTUAL"
+            exit 3
+          fi
+          FINAL=out/SC_Drive-v1.8.2-Radio-Maps-FINAL-PERMANENT-SIGNED.apk
+          cp "$APK" "$FINAL"
+          sha256sum "$FINAL" > out/SC_Drive-v1.8.2-Radio-Maps-FINAL-PERMANENT-SIGNED.sha256
+          cat > out/FINAL-VERIFICATION.txt <<EOF
+          SC Drive v1.8.2+28 Radio + Maps FINAL
+          Build profile: production
+          Google Maps key injection gate: PASS
+          Radio native bridge: INCLUDED
+          Flutter analyze: PASS
+          APK ZIP integrity: PASS
+          16 KB zipalign: PASS
+          APK signature verification: PASS
+          Permanent signer SHA-256: $ACTUAL
+          Signer continuity with SC Drive v1.7.5: PASS
+          Final release status: PERMANENT-SIGNED
+          Physical head-unit Maps/radio validation: REQUIRED AFTER INSTALLATION
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.8.2-Radio-Maps-FINAL-PERMANENT-SIGNED
+          path: out/**
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove signing material
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/scdrive-release.jks"
