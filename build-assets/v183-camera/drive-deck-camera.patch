@@ -84,29 +84,29 @@
      return Stack(
        children: <Widget>[
          Positioned.fill(
-@@ -771,18 +810,30 @@
-           ),
-         ),
-         Positioned(
--          left: widget.compact ? 12 : 16,
--          top: widget.compact ? 62 : 74,
-+          right: widget.compact ? 14 : 18,
-+          bottom: widget.compact ? 56 : 68,
-           child: _MapZoomControls(
-             onZoomIn: () => unawaited(_changeZoom(0.8)),
-             onZoomOut: () => unawaited(_changeZoom(-0.8)),
-           ),
+@@ -773,16 +812,27 @@
          ),
 -        Positioned(
 +        AnimatedPositioned(
 +          duration: const Duration(milliseconds: 300),
 +          curve: Curves.easeOutCubic,
-           right: widget.compact ? 14 : 18,
--          top: widget.compact ? 68 : 82,
+           right: widget.compact ? 12 : 16,
+-          top: widget.compact ? 62 : 74,
 +          top: cameraAlert.shouldRender
 +              ? (widget.compact ? 176 : 202)
-+              : (widget.compact ? 68 : 82),
-           child: _MapCompass(label: t.compassLabel),
++              : (widget.compact ? 62 : 74),
+           child: Column(
+             mainAxisSize: MainAxisSize.min,
+             children: <Widget>[
+               _MapCompass(label: t.compassLabel, compact: widget.compact),
+               SizedBox(height: widget.compact ? 7 : 9),
+               _MapZoomControls(
+                 compact: widget.compact,
+                 onZoomIn: () => unawaited(_changeZoom(0.8)),
+                 onZoomOut: () => unawaited(_changeZoom(-0.8)),
+               ),
+             ],
+           ),
          ),
 +        Positioned(
 +          right: widget.compact ? 12 : 16,
@@ -119,7 +119,7 @@
          if (t.gpsState == GpsState.weak || t.gpsState == GpsState.coasting)
            Positioned(
              left: 0,
-@@ -810,6 +861,28 @@
+@@ -810,6 +860,28 @@
                ),
              ),
            ),
@@ -148,7 +148,7 @@
          Positioned(
            left: 0,
            right: 0,
-@@ -1105,6 +1178,169 @@
+@@ -1105,6 +1177,169 @@
      );
    }
  }
@@ -317,4 +317,4 @@
 +}
  
  class _MapCompass extends StatelessWidget {
-   const _MapCompass({required this.label});
+   const _MapCompass({required this.label, required this.compact});
