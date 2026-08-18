@@ -36,7 +36,7 @@ jobs:
           ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android-final"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v182-final-sign.yml 'Reconstruct exact v1.8.2 source' >/tmp/v183-base.sh
           bash /tmp/v183-base.sh
           grep -n '^version: 1.8.2+28' scdrive-app/pubspec.yaml
-          sha256sum -c /tmp/v181-physics-authority.sha256
+          (cd scdrive-app && sha256sum -c /tmp/v181-physics-authority.sha256)
 
       - name: Apply v1.8.3 Camera Awareness overlay
         shell: bash
@@ -70,7 +70,7 @@ jobs:
           grep -q 'AnimatedSlide' scdrive-app/lib/features/head_unit/drive_deck_panel.dart
           grep -q 'OPENSTREETMAP' scdrive-app/lib/features/camera/camera_repository.dart
           grep -q 'out body;' scdrive-app/lib/features/camera/camera_repository.dart
-          sha256sum -c /tmp/v181-physics-authority.sha256
+          (cd scdrive-app && sha256sum -c /tmp/v181-physics-authority.sha256)
 
       - name: Require production Maps and permanent signing secrets
         shell: bash
