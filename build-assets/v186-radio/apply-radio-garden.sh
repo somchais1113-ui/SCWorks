@@ -11,7 +11,7 @@ s=pub.read_text()
 if 'url_launcher:' not in s:
     if '\ndev_dependencies:' not in s:
         raise SystemExit('dev_dependencies anchor not found')
-    s=s.replace('\ndev_dependencies:', '  url_launcher: ^6.3.2\n\ndev_dependencies:', 1)
+    s=s.replace('\ndev_dependencies:', '\n  url_launcher: ^6.3.2\n\ndev_dependencies:', 1)
 if 'version: 1.8.5+31' not in s:
     raise SystemExit('v1.8.5 version baseline not found')
 s=s.replace('version: 1.8.5+31','version: 1.8.6+32',1)
