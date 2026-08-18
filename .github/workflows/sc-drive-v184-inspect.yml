@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   inspect:
@@ -46,16 +46,25 @@ jobs:
           s=p.read_text()
           p.write_text(s.replace('version: 1.8.2+28','version: 1.8.3+29',1))
           PY
-      - name: Inspect speed display and fonts
+      - name: Publish inspection snapshot
         shell: bash
         run: |
           set -euxo pipefail
-          echo '=== PUBSPEC FONTS ==='
-          grep -n -A30 -B5 'family: Nissan' scdrive-app/pubspec.yaml || true
-          echo '=== SPEED DISPLAY REFERENCES ==='
-          grep -n -B35 -A65 'displaySpeedKph' scdrive-app/lib/features/head_unit/head_unit_screen.dart || true
-          grep -n -B35 -A65 'speedKph' scdrive-app/lib/features/head_unit/head_unit_screen.dart | head -220 || true
-          echo '=== LARGE FONT SIZE CONTEXT ==='
-          grep -n -B50 -A80 'fontSize: widget.compact ? 113 : 151' scdrive-app/lib/features/head_unit/head_unit_screen.dart || true
-          echo '=== APP THEME FONT ==='
-          grep -n -B20 -A40 'fontFamily' scdrive-app/lib/app/app.dart | head -180 || true
+          mkdir -p build-status
+          OUT=build-status/sc-drive-v184-source-inspection.txt
+          {
+            echo '=== PUBSPEC FONTS ==='
+            grep -n -A35 -B5 'family: Nissan' scdrive-app/pubspec.yaml || true
+            echo '=== SPEED DISPLAY / LARGE FONT CONTEXT ==='
+            grep -n -B70 -A110 'fontSize: widget.compact ? 113 : 151' scdrive-app/lib/features/head_unit/head_unit_screen.dart || true
+            echo '=== DISPLAY SPEED REFERENCES ==='
+            grep -n -B40 -A70 'displaySpeedKph' scdrive-app/lib/features/head_unit/head_unit_screen.dart || true
+            echo '=== APP THEME FONT ==='
+            grep -n -B25 -A55 'fontFamily' scdrive-app/lib/app/app.dart | head -220 || true
+          } > "$OUT"
+          git config user.name 'SC Drive Build Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add "$OUT"
+          git commit -m 'publish v1.8.4 source inspection [skip ci]' || true
+          git pull --rebase origin sc-drive-apk-build || true
+          git push origin HEAD:sc-drive-apk-build || true
