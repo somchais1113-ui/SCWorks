@@ -70,9 +70,6 @@ jobs:
           grep -q 'AnimatedSlide' scdrive-app/lib/features/head_unit/drive_deck_panel.dart
           grep -q 'OPENSTREETMAP' scdrive-app/lib/features/camera/camera_repository.dart
           grep -q 'out body;' scdrive-app/lib/features/camera/camera_repository.dart
-
-          # Camera Awareness is downstream of the existing vehicle engine.
-          # Any change to the protected physics/authority files must fail the build.
           sha256sum -c /tmp/v181-physics-authority.sha256
 
       - name: Require production Maps and permanent signing secrets
@@ -91,9 +88,7 @@ jobs:
               missing=1
             fi
           done
-          if [[ "$missing" -ne 0 ]]; then
-            exit 2
-          fi
+          if [[ "$missing" -ne 0 ]]; then exit 2; fi
           echo 'Production Maps key and permanent signing inputs are present.'
 
       - name: Materialize and validate permanent keystore
@@ -107,10 +102,7 @@ jobs:
           printf '%s' "$SC_DRIVE_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
           test -s "$KEYSTORE"
           chmod 600 "$KEYSTORE"
-          keytool -list \
-            -keystore "$KEYSTORE" \
-            -storepass "$SC_DRIVE_KEYSTORE_PASSWORD" \
-            -alias scdrive-release >/dev/null
+          keytool -list -keystore "$KEYSTORE" -storepass "$SC_DRIVE_KEYSTORE_PASSWORD" -alias scdrive-release >/dev/null
 
       - name: Resolve dependencies
         working-directory: scdrive-app
@@ -156,72 +148,47 @@ jobs:
           unzip -t "$APK" >/dev/null
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
           "$BT/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
-
           mkdir -p out
           "$BT/apksigner" verify --verbose --print-certs "$APK" | tee out/APKSIGNER-VERIFY.txt
           ACTUAL=$(sed -n 's/.*certificate SHA-256 digest: //p' out/APKSIGNER-VERIFY.txt | head -1 | tr -d ':[:space:]' | tr '[:lower:]' '[:upper:]')
           test -n "$ACTUAL"
-          if [[ "$ACTUAL" != "$EXPECTED_SIGNER_SHA256" ]]; then
-            echo "::error::Permanent signing certificate mismatch"
-            exit 3
-          fi
-
-          # Verify Camera Awareness and v1.8.2 Radio markers made it into AOT/native output.
+          if [[ "$ACTUAL" != "$EXPECTED_SIGNER_SHA256" ]]; then echo "::error::Permanent signing certificate mismatch"; exit 3; fi
           unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'CAMERA AHEAD'
           unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'OPENSTREETMAP'
           unzip -p "$APK" classes.dex | strings | grep -F -m1 'SYSTEM_RADIO_APP'
-
           if [[ -x "$BT/aapt" ]]; then
             "$BT/aapt" dump badging "$APK" | tee out/AAPT-BADGING.txt
             grep -q "package: name='com.scdeport.scdrive'" out/AAPT-BADGING.txt
             grep -q "versionCode='29'" out/AAPT-BADGING.txt
             grep -q "versionName='1.8.3'" out/AAPT-BADGING.txt
           fi
-
           FINAL=out/SC_Drive-v1.8.3-Camera-Awareness-PERMANENT-SIGNED.apk
           cp "$APK" "$FINAL"
           sha256sum "$FINAL" > out/SC_Drive-v1.8.3-Camera-Awareness-PERMANENT-SIGNED.apk.sha256
           cat > out/SC_Drive-v1.8.3-Camera-Awareness-FINAL-VERIFICATION.txt <<EOF
           SC Drive v1.8.3+29 Camera Awareness Engine
-          ==================================================
           Base: exact SC Drive v1.8.2 Radio + Maps source reconstruction
           Package: com.scdeport.scdrive
           Version: 1.8.3+29
           Build profile: production
-
-          CAMERA AWARENESS V1
-          - Offline-first local camera cache: INCLUDED
-          - Public camera source adapter: OpenStreetMap / Overpass
-          - Nearby candidate filtering: INCLUDED
-          - Vehicle-heading / camera-direction matching: INCLUDED
-          - Active-camera selection: INCLUDED
-          - Geodesic distance engine: INCLUDED
-          - 250 ms live countdown between GNSS updates: INCLUDED
-          - Local-minimum + behind-heading pass detector: INCLUDED
-          - Alert slide-in from right / slide-out to right: INCLUDED
-          - Alert card CAMERA AHEAD / distance / LIMIT / NOW: INCLUDED
-          - Empty alert frame while hidden: NONE
-          - Compass and zoom right-side layout: INCLUDED
-          - Active-navigation route-distance matching: NOT YET ENABLED (no route polyline source in current Live Map)
-
-          PRESERVED v1.8.2 SYSTEMS
-          - GNSS + IMU VehicleSpeedEngine authority: PRESERVED / HASH-GUARDED
-          - Realtime +G / -G pipeline: PRESERVED / HASH-GUARDED
-          - Adaptive Level 1 shadow-only boundary: PRESERVED / HASH-GUARDED
-          - OBD / OpenVehicle read-only authority boundary: PRESERVED
-          - Google Maps production configuration: REQUIRED/PRESENT AT BUILD
-          - System/OEM Radio bridge: INCLUDED
-          - Spotify integration: PRESERVED
-
-          VERIFICATION
-          - Flutter analyze: PASS
-          - Android unit tests: PASS
-          - APK ZIP integrity: PASS
-          - 16 KB zipalign: PASS
-          - APK signature verification: PASS
-          - Permanent signer SHA-256: $ACTUAL
-          - Signer continuity: PASS
-          - Physical head-unit camera/map/radio road validation: REQUIRED AFTER INSTALLATION
+          Camera cache: INCLUDED
+          Public camera source: OpenStreetMap / Overpass
+          Heading matching: INCLUDED
+          Geodesic distance + live countdown: INCLUDED
+          Pass detector: INCLUDED
+          Alert slide-in/out + CAMERA AHEAD / distance / LIMIT / NOW: INCLUDED
+          Active-navigation route-distance matching: NOT YET ENABLED
+          GNSS + IMU / +G/-G / Adaptive protected files: HASH-GUARDED
+          OBD/OpenVehicle authority boundary: PRESERVED
+          Radio bridge: INCLUDED
+          Flutter analyze: PASS
+          Android unit tests: PASS
+          APK ZIP integrity: PASS
+          16 KB zipalign: PASS
+          APK signature verification: PASS
+          Permanent signer SHA-256: $ACTUAL
+          Signer continuity: PASS
+          Physical head-unit road validation: REQUIRED AFTER INSTALLATION
           EOF
 
       - uses: actions/upload-artifact@v4
@@ -231,14 +198,16 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish verified build pointer
+      - name: Publish build pointer
+        if: always()
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p build-status
-          APK_SHA=$(cut -d' ' -f1 out/SC_Drive-v1.8.3-Camera-Awareness-PERMANENT-SIGNED.apk.sha256)
+          APK_SHA=''
+          if [[ -f out/SC_Drive-v1.8.3-Camera-Awareness-PERMANENT-SIGNED.apk.sha256 ]]; then APK_SHA=$(cut -d' ' -f1 out/SC_Drive-v1.8.3-Camera-Awareness-PERMANENT-SIGNED.apk.sha256); fi
           cat > build-status/sc-drive-v183-latest.txt <<EOF
-          STATUS=SUCCESS
+          STATUS=${{ job.status }}
           RUN_ID=$GITHUB_RUN_ID
           SOURCE_SHA=$GITHUB_SHA
           ARTIFACT_NAME=SC-Drive-v1.8.3-Camera-Awareness-PERMANENT-SIGNED
@@ -248,7 +217,7 @@ jobs:
           git config user.name 'SC Drive Build Bot'
           git config user.email 'actions@users.noreply.github.com'
           git add build-status/sc-drive-v183-latest.txt
-          git commit -m 'publish v1.8.3 verified build pointer [skip ci]'
+          git commit -m 'publish v1.8.3 build pointer [skip ci]'
           git push origin HEAD:sc-drive-apk-build
 
       - name: Remove signing material
