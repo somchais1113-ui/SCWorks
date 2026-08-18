@@ -46,7 +46,80 @@ jobs:
           cp build-assets/v183-camera/camera_models.dart scdrive-app/lib/features/camera/camera_models.dart
           cp build-assets/v183-camera/camera_repository.dart scdrive-app/lib/features/camera/camera_repository.dart
           cp build-assets/v183-camera/camera_awareness_service.dart scdrive-app/lib/features/camera/camera_awareness_service.dart
+
+          set +e
           patch -d scdrive-app -p1 --forward --batch < build-assets/v183-camera/drive-deck-camera.patch
+          PATCH_STATUS=$?
+          set -e
+          if [[ "$PATCH_STATUS" -ne 0 ]]; then
+            REJ=scdrive-app/lib/features/head_unit/drive_deck_panel.dart.rej
+            test -f "$REJ"
+            # The v1.8.1 UI-polish delta moved the right-side controls. Only the
+            # Zoom/Compass hunk is allowed to need anchor rebasing here.
+            grep -q '_MapZoomControls' "$REJ"
+            grep -q '_MapCompass' "$REJ"
+            test "$(grep -c '^@@' "$REJ")" -eq 1
+            python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('scdrive-app/lib/features/head_unit/drive_deck_panel.dart')
+          lines = p.read_text().splitlines()
+
+          zoom_child = next(i for i, line in enumerate(lines) if 'child: _MapZoomControls(' in line)
+          compass_child = next(i for i, line in enumerate(lines) if 'child: _MapCompass(label: t.compassLabel)' in line and i > zoom_child)
+
+          def block_start(index):
+              for i in range(index, -1, -1):
+                  stripped = lines[i].strip()
+                  if stripped in {'Positioned(', 'AnimatedPositioned('} and lines[i].startswith('        '):
+                      return i
+              raise RuntimeError('positioned block start not found')
+
+          zoom_start = block_start(zoom_child)
+          compass_start = block_start(compass_child)
+          if compass_start <= zoom_start:
+              raise RuntimeError('unexpected map control order')
+
+          compass_end = None
+          for i in range(compass_child + 1, min(len(lines), compass_child + 12)):
+              if lines[i] == '        ),':
+                  compass_end = i
+                  break
+          if compass_end is None:
+              raise RuntimeError('compass block end not found')
+
+          replacement = '''        Positioned(
+            right: widget.compact ? 14 : 18,
+            bottom: widget.compact ? 56 : 68,
+            child: _MapZoomControls(
+              onZoomIn: () => unawaited(_changeZoom(0.8)),
+              onZoomOut: () => unawaited(_changeZoom(-0.8)),
+            ),
+          ),
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOutCubic,
+            right: widget.compact ? 14 : 18,
+            top: cameraAlert.shouldRender
+                ? (widget.compact ? 176 : 202)
+                : (widget.compact ? 68 : 82),
+            child: _MapCompass(label: t.compassLabel),
+          ),
+          Positioned(
+            right: widget.compact ? 12 : 16,
+            top: widget.compact ? 48 : 58,
+            child: _CameraAlertOverlay(
+              snapshot: cameraAlert,
+              compact: widget.compact,
+            ),
+          ),'''.splitlines()
+
+          lines[zoom_start:compass_end + 1] = replacement
+          p.write_text('\n'.join(lines) + '\n')
+          PY
+            rm -f "$REJ"
+          fi
+          test -z "$(find scdrive-app -name '*.rej' -print -quit)"
 
           python3 - <<'PY'
           from pathlib import Path
@@ -68,6 +141,7 @@ jobs:
           grep -q 'class OsmCameraRepository' scdrive-app/lib/features/camera/camera_repository.dart
           grep -q 'CAMERA AHEAD' scdrive-app/lib/features/head_unit/drive_deck_panel.dart
           grep -q 'AnimatedSlide' scdrive-app/lib/features/head_unit/drive_deck_panel.dart
+          grep -q 'cameraAlert.shouldRender' scdrive-app/lib/features/head_unit/drive_deck_panel.dart
           grep -q 'OPENSTREETMAP' scdrive-app/lib/features/camera/camera_repository.dart
           grep -q 'out body;' scdrive-app/lib/features/camera/camera_repository.dart
           (cd scdrive-app && sha256sum -c /tmp/v181-physics-authority.sha256)
