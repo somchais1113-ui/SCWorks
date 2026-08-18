@@ -1,2 +1,2 @@
-STATUS=running
+STATUS=success
 RUN_ID=32124606798
