@@ -1,0 +1,320 @@
+--- a/lib/features/head_unit/drive_deck_panel.dart
++++ b/lib/features/head_unit/drive_deck_panel.dart
+@@ -8,6 +8,9 @@
+ import '../../services/drive_data_service.dart';
+ import '../../services/head_unit_platform_service.dart';
+ import '../../services/weather_service.dart';
++import '../camera/camera_awareness_service.dart';
++import '../camera/camera_models.dart';
++import '../camera/camera_repository.dart';
+ 
+ class DriveDeckPanel extends StatefulWidget {
+   const DriveDeckPanel({
+@@ -53,6 +56,8 @@
+     {"featureType":"water","elementType":"labels.text.fill","stylers":[{"color":"#71808E"}]}
+   ]''';
+   final PageController _pages = PageController();
++  late final OsmCameraRepository _cameraRepository;
++  late final CameraAwarenessService _cameraAwareness;
+   GoogleMapController? _mapController;
+   int _page = 0;
+   double _zoomOffset = 0;
+@@ -81,6 +86,10 @@
+   @override
+   void initState() {
+     super.initState();
++    _cameraRepository = OsmCameraRepository();
++    _cameraAwareness = CameraAwarenessService(_cameraRepository)
++      ..addListener(_onCameraAwarenessChanged);
++    unawaited(_initializeCameraAwareness());
+     widget.telemetry.addListener(_onTelemetry);
+     widget.driveData.addListener(_onDriveData);
+     _ensureMapThemeLoop();
+@@ -118,6 +127,8 @@
+   void dispose() {
+     widget.telemetry.removeListener(_onTelemetry);
+     widget.driveData.removeListener(_onDriveData);
++    _cameraAwareness.removeListener(_onCameraAwarenessChanged);
++    _cameraAwareness.dispose();
+     _uiRefreshTimer?.cancel();
+     _cameraTimer?.cancel();
+     _mapThemeTimer?.cancel();
+@@ -445,9 +456,36 @@
+         _MapLightingMode.tunnel => 'TUNNEL DARK',
+       };
+ 
++  Future<void> _initializeCameraAwareness() async {
++    await _cameraAwareness.initialize();
++    if (!mounted) return;
++    _feedCameraAwareness();
++  }
++
++  void _onCameraAwarenessChanged() {
++    if (mounted && _page == 0) setState(() {});
++  }
++
++  void _feedCameraAwareness() {
++    final t = widget.telemetry;
++    final gpsUsable = t.hasMapLocation &&
++        t.gpsState != GpsState.off &&
++        t.gpsState != GpsState.permissionDenied &&
++        t.gpsState != GpsState.permissionDeniedForever &&
++        t.gpsState != GpsState.signalLost;
++    _cameraAwareness.updateVehicle(
++      latitude: t.latitude,
++      longitude: t.longitude,
++      headingDeg: t.heading,
++      speedKph: t.displaySpeedKph,
++      gpsUsable: gpsUsable,
++    );
++  }
++
+   void _onTelemetry() {
+     if (!mounted) return;
+     _sampleDrivingContext(DateTime.now());
++    _feedCameraAwareness();
+     _evaluateMapLighting();
+     _ensureAdaptiveCameraLoop();
+ 
+@@ -687,6 +725,7 @@
+     }
+ 
+     final target = LatLng(t.latitude, t.longitude);
++    final cameraAlert = _cameraAwareness.snapshot;
+     return Stack(
+       children: <Widget>[
+         Positioned.fill(
+@@ -771,18 +810,30 @@
+           ),
+         ),
+         Positioned(
+-          left: widget.compact ? 12 : 16,
+-          top: widget.compact ? 62 : 74,
++          right: widget.compact ? 14 : 18,
++          bottom: widget.compact ? 56 : 68,
+           child: _MapZoomControls(
+             onZoomIn: () => unawaited(_changeZoom(0.8)),
+             onZoomOut: () => unawaited(_changeZoom(-0.8)),
+           ),
+         ),
+-        Positioned(
++        AnimatedPositioned(
++          duration: const Duration(milliseconds: 300),
++          curve: Curves.easeOutCubic,
+           right: widget.compact ? 14 : 18,
+-          top: widget.compact ? 68 : 82,
++          top: cameraAlert.shouldRender
++              ? (widget.compact ? 176 : 202)
++              : (widget.compact ? 68 : 82),
+           child: _MapCompass(label: t.compassLabel),
+         ),
++        Positioned(
++          right: widget.compact ? 12 : 16,
++          top: widget.compact ? 48 : 58,
++          child: _CameraAlertOverlay(
++            snapshot: cameraAlert,
++            compact: widget.compact,
++          ),
++        ),
+         if (t.gpsState == GpsState.weak || t.gpsState == GpsState.coasting)
+           Positioned(
+             left: 0,
+@@ -810,6 +861,28 @@
+               ),
+             ),
+           ),
++        if (_cameraRepository.records.isNotEmpty)
++          Positioned(
++            left: widget.compact ? 10 : 14,
++            bottom: widget.compact ? 48 : 58,
++            child: IgnorePointer(
++              child: Container(
++                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
++                decoration: BoxDecoration(
++                  color: const Color(0xB8000000),
++                  borderRadius: BorderRadius.circular(6),
++                ),
++                child: Text(
++                  _cameraRepository.attribution,
++                  style: const TextStyle(
++                    color: Color(0xFFD5D9DE),
++                    fontSize: 7,
++                    fontWeight: FontWeight.w600,
++                  ),
++                ),
++              ),
++            ),
++          ),
+         Positioned(
+           left: 0,
+           right: 0,
+@@ -1105,6 +1178,169 @@
+     );
+   }
+ }
++
++class _CameraAlertOverlay extends StatelessWidget {
++  const _CameraAlertOverlay({
++    required this.snapshot,
++    required this.compact,
++  });
++
++  final CameraAlertSnapshot snapshot;
++  final bool compact;
++
++  @override
++  Widget build(BuildContext context) {
++    final camera = snapshot.camera;
++    if (camera == null) return const SizedBox.shrink();
++
++    final visible = snapshot.phase != CameraAlertPhase.entering &&
++        snapshot.phase != CameraAlertPhase.exiting &&
++        snapshot.phase != CameraAlertPhase.hidden;
++    final distance = snapshot.displayDistanceMeters.isFinite
++        ? snapshot.displayDistanceMeters.clamp(0.0, 9999.0).round()
++        : 0;
++    final limit = camera.speedLimitKph;
++    final nowSpeed = snapshot.vehicleSpeedKph.round();
++    final overLimit = limit != null && nowSpeed > limit;
++    final near = snapshot.phase == CameraAlertPhase.near || distance <= 150;
++    final accent = near ? const Color(0xFFFF4D4D) : const Color(0xFFFF6B35);
++
++    return IgnorePointer(
++      child: AnimatedSlide(
++        duration: const Duration(milliseconds: 320),
++        curve: Curves.easeOutCubic,
++        offset: visible ? Offset.zero : const Offset(1.18, 0),
++        child: AnimatedOpacity(
++          duration: const Duration(milliseconds: 220),
++          opacity: visible ? 1 : 0,
++          child: Container(
++            width: compact ? 168 : 208,
++            padding: EdgeInsets.fromLTRB(
++              compact ? 12 : 15,
++              compact ? 10 : 12,
++              compact ? 12 : 15,
++              compact ? 9 : 11,
++            ),
++            decoration: BoxDecoration(
++              color: const Color(0xED101419),
++              borderRadius: BorderRadius.circular(compact ? 13 : 16),
++              border: Border.all(color: accent.withAlpha(209)),
++              boxShadow: const <BoxShadow>[
++                BoxShadow(
++                  color: Color(0x66000000),
++                  blurRadius: 16,
++                  offset: Offset(0, 7),
++                ),
++              ],
++            ),
++            child: Column(
++              mainAxisSize: MainAxisSize.min,
++              crossAxisAlignment: CrossAxisAlignment.start,
++              children: <Widget>[
++                Row(
++                  children: <Widget>[
++                    Container(
++                      width: compact ? 7 : 8,
++                      height: compact ? 7 : 8,
++                      decoration: BoxDecoration(
++                        color: accent,
++                        shape: BoxShape.circle,
++                      ),
++                    ),
++                    const SizedBox(width: 7),
++                    Text(
++                      snapshot.phase == CameraAlertPhase.passed
++                          ? 'CAMERA PASSED'
++                          : 'CAMERA AHEAD',
++                      style: TextStyle(
++                        color: Colors.white,
++                        fontSize: compact ? 9.5 : 11.5,
++                        fontWeight: FontWeight.w900,
++                        letterSpacing: 0.8,
++                      ),
++                    ),
++                  ],
++                ),
++                SizedBox(height: compact ? 4 : 6),
++                Text(
++                  '$distance m',
++                  style: TextStyle(
++                    color: Colors.white,
++                    fontSize: compact ? 27 : 34,
++                    height: 0.95,
++                    fontWeight: FontWeight.w700,
++                    letterSpacing: -1.2,
++                  ),
++                ),
++                SizedBox(height: compact ? 8 : 10),
++                Row(
++                  children: <Widget>[
++                    Expanded(
++                      child: _CameraMetric(
++                        label: 'LIMIT',
++                        value: limit?.toString() ?? '--',
++                        compact: compact,
++                      ),
++                    ),
++                    Expanded(
++                      child: _CameraMetric(
++                        label: 'NOW',
++                        value: nowSpeed.toString(),
++                        compact: compact,
++                        emphasized: overLimit,
++                      ),
++                    ),
++                  ],
++                ),
++              ],
++            ),
++          ),
++        ),
++      ),
++    );
++  }
++}
++
++class _CameraMetric extends StatelessWidget {
++  const _CameraMetric({
++    required this.label,
++    required this.value,
++    required this.compact,
++    this.emphasized = false,
++  });
++
++  final String label;
++  final String value;
++  final bool compact;
++  final bool emphasized;
++
++  @override
++  Widget build(BuildContext context) {
++    return Row(
++      mainAxisSize: MainAxisSize.min,
++      children: <Widget>[
++        Text(
++          label,
++          style: TextStyle(
++            color: const Color(0xFF9DA5AE),
++            fontSize: compact ? 7.5 : 8.5,
++            fontWeight: FontWeight.w800,
++            letterSpacing: 0.5,
++          ),
++        ),
++        const SizedBox(width: 5),
++        Text(
++          value,
++          style: TextStyle(
++            color: emphasized ? const Color(0xFFFF4D4D) : Colors.white,
++            fontSize: compact ? 11 : 13,
++            fontWeight: FontWeight.w900,
++          ),
++        ),
++      ],
++    );
++  }
++}
+ 
+ class _MapCompass extends StatelessWidget {
+   const _MapCompass({required this.label});
