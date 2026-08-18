@@ -1,4 +1,5 @@
 name: Build SC Drive v1.8.3 Camera Candidate
+# registered trigger 2026-08-18
 
 on:
   push:
