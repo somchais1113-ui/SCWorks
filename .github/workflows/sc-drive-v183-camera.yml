@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   android:
@@ -230,6 +230,26 @@ jobs:
           path: out/**
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish verified build pointer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p build-status
+          APK_SHA=$(cut -d' ' -f1 out/SC_Drive-v1.8.3-Camera-Awareness-PERMANENT-SIGNED.apk.sha256)
+          cat > build-status/sc-drive-v183-latest.txt <<EOF
+          STATUS=SUCCESS
+          RUN_ID=$GITHUB_RUN_ID
+          SOURCE_SHA=$GITHUB_SHA
+          ARTIFACT_NAME=SC-Drive-v1.8.3-Camera-Awareness-PERMANENT-SIGNED
+          APK_NAME=SC_Drive-v1.8.3-Camera-Awareness-PERMANENT-SIGNED.apk
+          APK_SHA256=$APK_SHA
+          EOF
+          git config user.name 'SC Drive Build Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add build-status/sc-drive-v183-latest.txt
+          git commit -m 'publish v1.8.3 verified build pointer [skip ci]'
+          git push origin HEAD:sc-drive-apk-build
 
       - name: Remove signing material
         if: always()
