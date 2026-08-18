@@ -71,11 +71,27 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["build"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v183-prodmap-candidate.yml 'Harden Camera Engine and align map controls' >/tmp/harden.sh
-          bash /tmp/harden.sh
-          grep -q 'final CameraRepository repository;' scdrive-app/lib/features/camera/camera_awareness_service.dart
-          grep -q 'Duration(minutes: 2)' scdrive-app/lib/features/camera/camera_awareness_service.dart
-          grep -q 'CAMERA AHEAD' scdrive-app/lib/features/head_unit/drive_deck_panel.dart
+          python3 build-assets/v183-camera/final_harden.py
+          dart format \
+            scdrive-app/lib/features/camera/camera_repository.dart \
+            scdrive-app/lib/features/camera/camera_awareness_service.dart \
+            scdrive-app/lib/features/head_unit/drive_deck_panel.dart
+          python3 - <<'PY'
+          from pathlib import Path
+          r = Path('scdrive-app/lib/features/camera/camera_repository.dart').read_text()
+          s = Path('scdrive-app/lib/features/camera/camera_awareness_service.dart').read_text()
+          p = Path('scdrive-app/lib/features/head_unit/drive_deck_panel.dart').read_text()
+          assert '_records.isEmpty' not in r
+          assert 'void dispose();' in r
+          assert 'final CameraRepository repository;' in s
+          assert 'final OsmCameraRepository repository;' not in s
+          assert 'Duration(minutes: 2)' in s
+          assert 'CAMERA AHEAD' in p
+          alert = p.index('child: _CameraAlertOverlay')
+          before = p[max(0, alert - 1800):alert]
+          assert '_MapZoomControls' in before and 'bottom:' in before
+          assert '_MapCompass' in before and 'AnimatedPositioned' in before
+          PY
           (cd scdrive-app && sha256sum -c /tmp/v181-physics-authority.sha256)
 
       - name: Require production Maps configuration
