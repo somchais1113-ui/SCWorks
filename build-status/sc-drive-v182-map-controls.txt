@@ -1,0 +1,130 @@
+=== MAP ZOOM ===
+769-              ),
+770-            ),
+771-          ),
+772-        ),
+773-        Positioned(
+774-          right: widget.compact ? 12 : 16,
+775-          top: widget.compact ? 62 : 74,
+776-          child: Column(
+777-            mainAxisSize: MainAxisSize.min,
+778-            children: <Widget>[
+779-              _MapCompass(label: t.compassLabel, compact: widget.compact),
+780-              SizedBox(height: widget.compact ? 7 : 9),
+781:              _MapZoomControls(
+782-                compact: widget.compact,
+783-                onZoomIn: () => unawaited(_changeZoom(0.8)),
+784-                onZoomOut: () => unawaited(_changeZoom(-0.8)),
+785-              ),
+786-            ],
+787-          ),
+788-        ),
+789-        if (t.gpsState == GpsState.weak || t.gpsState == GpsState.coasting)
+790-          Positioned(
+791-            left: 0,
+792-            right: 0,
+793-            top: widget.compact ? 70 : 82,
+794-            child: Center(
+795-              child: Container(
+796-                padding:
+797-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+798-                decoration: BoxDecoration(
+799-                  color: const Color(0xE6A76721),
+--
+1063-                color: gpsStatus == 'COASTING'
+1064-                    ? const Color(0xFFE6A15B)
+1065-                    : const Color(0xFFB9C3CE),
+1066-              ),
+1067-            ),
+1068-          ],
+1069-        ),
+1070-      ),
+1071-    );
+1072-  }
+1073-}
+1074-
+1075:class _MapZoomControls extends StatelessWidget {
+1076:  const _MapZoomControls({
+1077-    required this.compact,
+1078-    required this.onZoomIn,
+1079-    required this.onZoomOut,
+1080-  });
+1081-
+1082-  final bool compact;
+1083-  final VoidCallback onZoomIn;
+1084-  final VoidCallback onZoomOut;
+1085-
+1086-  @override
+1087-  Widget build(BuildContext context) {
+1088-    final width = compact ? 38.0 : 42.0;
+1089-    final iconSize = compact ? 18.0 : 20.0;
+1090-    return Material(
+1091-      color: Colors.transparent,
+1092-      borderRadius: BorderRadius.circular(14),
+1093-      clipBehavior: Clip.antiAlias,
+1094-      child: Container(
+=== MAP COMPASS ===
+767-                  ),
+768-                ),
+769-              ),
+770-            ),
+771-          ),
+772-        ),
+773-        Positioned(
+774-          right: widget.compact ? 12 : 16,
+775-          top: widget.compact ? 62 : 74,
+776-          child: Column(
+777-            mainAxisSize: MainAxisSize.min,
+778-            children: <Widget>[
+779:              _MapCompass(label: t.compassLabel, compact: widget.compact),
+780-              SizedBox(height: widget.compact ? 7 : 9),
+781-              _MapZoomControls(
+782-                compact: widget.compact,
+783-                onZoomIn: () => unawaited(_changeZoom(0.8)),
+784-                onZoomOut: () => unawaited(_changeZoom(-0.8)),
+785-              ),
+786-            ],
+787-          ),
+788-        ),
+789-        if (t.gpsState == GpsState.weak || t.gpsState == GpsState.coasting)
+790-          Positioned(
+791-            left: 0,
+792-            right: 0,
+793-            top: widget.compact ? 70 : 82,
+794-            child: Center(
+795-              child: Container(
+796-                padding:
+797-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+--
+1131-                icon: const Icon(Icons.remove_rounded),
+1132-                color: const Color(0xFF26313B),
+1133-                iconSize: iconSize,
+1134-              ),
+1135-            ),
+1136-          ],
+1137-        ),
+1138-      ),
+1139-    );
+1140-  }
+1141-}
+1142-
+1143:class _MapCompass extends StatelessWidget {
+1144:  const _MapCompass({required this.label, required this.compact});
+1145-  final String label;
+1146-  final bool compact;
+1147-
+1148-  @override
+1149-  Widget build(BuildContext context) {
+1150-    return Container(
+1151-      width: compact ? 58 : 64,
+1152-      height: compact ? 58 : 64,
+1153-      decoration: BoxDecoration(
+1154-        color: const Color(0xC90B0F14),
+1155-        shape: BoxShape.circle,
+1156-        border: Border.all(color: const Color(0xFF3A424B)),
+1157-      ),
+1158-      child: Column(
+1159-        mainAxisAlignment: MainAxisAlignment.center,
+1160-        children: <Widget>[
+1161-          Text(
+1162-            label,
