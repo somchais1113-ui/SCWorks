@@ -1,4 +1,4 @@
-name: Build SC Drive v1.8.4 Final Candidate
+name: Build SC Drive v1.8.5 Drive Dynamics Tracked
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: sc-drive-v184-final-candidate
+  group: sc-drive-v185-dynamics-tracked
   cancel-in-progress: true
 
 jobs:
@@ -20,31 +20,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-
-      - name: Publish running pointer
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p build-status
-          cat > build-status/sc-drive-v184-tracked.txt <<EOF
-          STATUS=running
-          RUN_ID=$GITHUB_RUN_ID
-          SOURCE_SHA=$GITHUB_SHA
-          ARTIFACT_NAME=SC-Drive-v1.8.4-Camera-Hardened-FONT-READY-CANDIDATE
-          APK_NAME=SC_Drive-v1.8.4-Camera-Hardened-FONT-READY-CANDIDATE.apk
-          APK_SHA256=
-          EOF
-          git config user.name 'SC Drive Build Bot'
-          git config user.email 'actions@users.noreply.github.com'
-          git add build-status/sc-drive-v184-tracked.txt
-          git commit -m 'publish v1.8.4 running pointer [skip ci]' || true
-          git push origin HEAD:sc-drive-apk-build || true
-
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.35.7'
@@ -55,12 +34,12 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android-final"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v182-final-sign.yml 'Reconstruct exact v1.8.2 source' >/tmp/v184-base.sh
-          bash /tmp/v184-base.sh
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android-final"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v182-final-sign.yml 'Reconstruct exact v1.8.2 source' >/tmp/base.sh
+          bash /tmp/base.sh
           grep -n '^version: 1.8.2+28' scdrive-app/pubspec.yaml
           (cd scdrive-app && sha256sum -c /tmp/v181-physics-authority.sha256)
 
-      - name: Apply v1.8.3 Camera Awareness overlay
+      - name: Apply Camera Awareness and v1.8.4 hardening
         shell: bash
         run: |
           set -euxo pipefail
@@ -70,55 +49,72 @@ jobs:
           cp build-assets/v183-camera/camera_awareness_service.dart scdrive-app/lib/features/camera/camera_awareness_service.dart
           patch -d scdrive-app -p1 --forward --batch < build-assets/v183-camera/drive-deck-camera.patch
           test -z "$(find scdrive-app -name '*.rej' -print -quit)"
-
-      - name: Apply v1.8.4 hardening
-        shell: bash
-        run: |
-          set -euxo pipefail
           python3 - <<'PY'
           from pathlib import Path
-
-          pub=Path('scdrive-app/pubspec.yaml')
-          s=pub.read_text()
-          if 'version: 1.8.2+28' not in s:
-              raise SystemExit('expected v1.8.2+28 baseline')
-          pub.write_text(s.replace('version: 1.8.2+28','version: 1.8.4+30',1))
-
           repo=Path('scdrive-app/lib/features/camera/camera_repository.dart')
           s=repo.read_text()
           old='if (_records.isEmpty || centerLat == null || centerLon == null || synced == null) {'
           new='if (centerLat == null || centerLon == null || synced == null) {'
-          if old not in s:
-              raise SystemExit('camera refresh gate not found')
+          if old not in s: raise SystemExit('camera refresh gate not found')
           s=s.replace(old,new,1)
           needle='  node["enforcement"="maxspeed"](around:${_syncRadiusMeters.round()},$latitude,$longitude);\n'
-          if needle not in s:
-              raise SystemExit('Overpass maxspeed query not found')
-          s=s.replace(needle, needle+'  node["enforcement"="traffic_signals"](around:${_syncRadiusMeters.round()},$latitude,$longitude);\n',1)
+          if needle not in s: raise SystemExit('camera query anchor not found')
+          s=s.replace(needle,needle+'  node["enforcement"="traffic_signals"](around:${_syncRadiusMeters.round()},$latitude,$longitude);\n',1)
           repo.write_text(s)
-
           svc=Path('scdrive-app/lib/features/camera/camera_awareness_service.dart')
           s=svc.read_text()
-          if 'const Duration(seconds: 30)' not in s:
-              raise SystemExit('camera retry interval not found')
+          if 'const Duration(seconds: 30)' not in s: raise SystemExit('camera retry interval not found')
           svc.write_text(s.replace('const Duration(seconds: 30)','const Duration(minutes: 2)',1))
           PY
 
-          dart format \
-            scdrive-app/lib/features/camera/camera_models.dart \
-            scdrive-app/lib/features/camera/camera_repository.dart \
-            scdrive-app/lib/features/camera/camera_awareness_service.dart \
-            scdrive-app/lib/features/head_unit/drive_deck_panel.dart \
-            scdrive-app/lib/features/head_unit/head_unit_screen.dart
+      - name: Add Drive Data page 3 realtime dynamics
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cp build-assets/v185-dynamics/drive_dynamics_panel.dart scdrive-app/lib/features/head_unit/drive_dynamics_panel.dart
+          python3 - <<'PY'
+          from pathlib import Path
+          panel=Path('scdrive-app/lib/features/head_unit/drive_dynamics_panel.dart')
+          s=panel.read_text()
+          s=s.replace('builder: (context, constraints) {','builder: (context, _) {',1)
+          s=s.replace('maxAbs = (maxAbs * 1.18).clamp(0.6, 1.5);','maxAbs = (maxAbs * 1.18).clamp(0.6, 1.5).toDouble();',1)
+          s=s.replace("final alpha = (50 + ageFraction * 155).round().clamp(40, 220);","final alpha = (50 + ageFraction * 155).round().clamp(40, 220).toInt();",1)
+          panel.write_text(s)
 
-          grep -n '^version: 1.8.4+30' scdrive-app/pubspec.yaml
-          grep -q 'Duration(minutes: 2)' scdrive-app/lib/features/camera/camera_awareness_service.dart
-          grep -q 'traffic_signals' scdrive-app/lib/features/camera/camera_repository.dart
-          ! grep -q '_records.isEmpty || centerLat' scdrive-app/lib/features/camera/camera_repository.dart
+          deck=Path('scdrive-app/lib/features/head_unit/drive_deck_panel.dart')
+          s=deck.read_text()
+          anchor="import 'package:google_maps_flutter/google_maps_flutter.dart';\n"
+          if anchor not in s: raise SystemExit('drive deck import anchor not found')
+          s=s.replace(anchor,anchor+"\nimport 'drive_dynamics_panel.dart';\n",1)
+          old="""            children: <Widget>[\n              _mapPage(),\n              _drivePage(),\n            ],"""
+          new="""            children: <Widget>[\n              _mapPage(),\n              _drivePage(),\n              DriveDynamicsPanel(\n                telemetry: widget.telemetry,\n                compact: widget.compact,\n              ),\n            ],"""
+          if old not in s: raise SystemExit('drive deck PageView children anchor not found')
+          s=s.replace(old,new,1)
+          dots="""                  Row(\n                    children: List<Widget>.generate(\n                      2,"""
+          if dots not in s: raise SystemExit('drive deck page indicator anchor not found')
+          s=s.replace(dots,"""                  Row(\n                    children: List<Widget>.generate(\n                      3,""",1)
+          marker="""                    'DRIVE DATA',\n                    style: TextStyle(\n                      color: _page == 1"""
+          if marker not in s: raise SystemExit('DRIVE DATA header anchor not found')
+          s=s.replace(marker,"""                    'DRIVE DATA',\n                    style: TextStyle(\n                      color: _page >= 1""",1)
+          deck.write_text(s)
+
+          pub=Path('scdrive-app/pubspec.yaml')
+          s=pub.read_text()
+          if 'version: 1.8.2+28' not in s: raise SystemExit('version baseline not found')
+          pub.write_text(s.replace('version: 1.8.2+28','version: 1.8.5+31',1))
+          PY
+          dart format \
+            scdrive-app/lib/features/head_unit/drive_dynamics_panel.dart \
+            scdrive-app/lib/features/head_unit/drive_deck_panel.dart \
+            scdrive-app/lib/features/camera/camera_repository.dart \
+            scdrive-app/lib/features/camera/camera_awareness_service.dart
+          grep -q 'DriveDynamicsPanel' scdrive-app/lib/features/head_unit/drive_deck_panel.dart
+          grep -q 'LONGITUDINAL G' scdrive-app/lib/features/head_unit/drive_dynamics_panel.dart
+          grep -q 'G-G DIAGRAM' scdrive-app/lib/features/head_unit/drive_dynamics_panel.dart
+          grep -q 'SPEED TRACE' scdrive-app/lib/features/head_unit/drive_dynamics_panel.dart
+          grep -n '^version: 1.8.5+31' scdrive-app/pubspec.yaml
           grep -q '_digitalSpeed >= 100' scdrive-app/lib/features/head_unit/head_unit_screen.dart
-          grep -q 'target.round().clamp(0, 240)' scdrive-app/lib/features/head_unit/head_unit_screen.dart
           grep -q 'fit: BoxFit.scaleDown' scdrive-app/lib/features/head_unit/head_unit_screen.dart
-          grep -q "fontFamily: 'NissanBrand'" scdrive-app/lib/features/head_unit/head_unit_screen.dart
           (cd scdrive-app && sha256sum -c /tmp/v181-physics-authority.sha256)
 
       - name: Require production Maps secret
@@ -169,45 +165,48 @@ jobs:
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
           "$BT/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
           mkdir -p out/build-tools/lib
-          cp "$APK" out/SC_Drive-v1.8.4-Camera-Hardened-FONT-READY-CANDIDATE.apk
+          cp "$APK" out/SC_Drive-v1.8.5-Drive-Dynamics-CANDIDATE.apk
           cp "$BT/zipalign" out/build-tools/zipalign
           cp "$BT/apksigner" out/build-tools/apksigner
           cp "$BT/lib/apksigner.jar" out/build-tools/lib/apksigner.jar
           cp "$BT/aapt" out/build-tools/aapt
           chmod +x out/build-tools/zipalign out/build-tools/apksigner out/build-tools/aapt
+          unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'G-G DIAGRAM'
+          unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'LONGITUDINAL G'
           unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'CAMERA AHEAD'
-          unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'OPENSTREETMAP'
           unzip -p "$APK" classes.dex | strings | grep -F -m1 'SYSTEM_RADIO_APP'
           "$BT/aapt" dump badging "$APK" | tee out/AAPT-BADGING.txt
           grep -q "package: name='com.scdeport.scdrive'" out/AAPT-BADGING.txt
-          grep -q "versionCode='30'" out/AAPT-BADGING.txt
-          grep -q "versionName='1.8.4'" out/AAPT-BADGING.txt
-          unzip -p "$APK" assets/flutter_assets/FontManifest.json > out/FONT-MANIFEST-BEFORE-INJECTION.json
-          sha256sum out/SC_Drive-v1.8.4-Camera-Hardened-FONT-READY-CANDIDATE.apk > out/CANDIDATE.sha256
+          grep -q "versionCode='31'" out/AAPT-BADGING.txt
+          grep -q "versionName='1.8.5'" out/AAPT-BADGING.txt
+          sha256sum out/SC_Drive-v1.8.5-Drive-Dynamics-CANDIDATE.apk > out/CANDIDATE.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: SC-Drive-v1.8.4-Camera-Hardened-FONT-READY-CANDIDATE
+          name: SC-Drive-v1.8.5-Drive-Dynamics-CANDIDATE
           path: out/**
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish final tracked pointer
+      - name: Publish build pointer
         if: always()
         shell: bash
         run: |
           set -euxo pipefail
+          mkdir -p build-status
           APK_SHA=''
           if [[ -f out/CANDIDATE.sha256 ]]; then APK_SHA=$(cut -d' ' -f1 out/CANDIDATE.sha256); fi
-          cat > build-status/sc-drive-v184-tracked.txt <<EOF
+          cat > build-status/sc-drive-v185-dynamics.txt <<EOF
           STATUS=${{ job.status }}
           RUN_ID=$GITHUB_RUN_ID
           SOURCE_SHA=$GITHUB_SHA
-          ARTIFACT_NAME=SC-Drive-v1.8.4-Camera-Hardened-FONT-READY-CANDIDATE
-          APK_NAME=SC_Drive-v1.8.4-Camera-Hardened-FONT-READY-CANDIDATE.apk
+          ARTIFACT_NAME=SC-Drive-v1.8.5-Drive-Dynamics-CANDIDATE
+          APK_NAME=SC_Drive-v1.8.5-Drive-Dynamics-CANDIDATE.apk
           APK_SHA256=$APK_SHA
           EOF
-          git add build-status/sc-drive-v184-tracked.txt
-          git commit -m 'publish v1.8.4 tracked result [skip ci]' || true
+          git config user.name 'SC Drive Build Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add build-status/sc-drive-v185-dynamics.txt
+          git commit -m 'publish v1.8.5 dynamics result [skip ci]' || true
           git pull --rebase origin sc-drive-apk-build || true
           git push origin HEAD:sc-drive-apk-build || true
