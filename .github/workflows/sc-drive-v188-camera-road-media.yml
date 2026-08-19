@@ -1,0 +1,216 @@
+name: Build SC Drive v1.8.8 Camera Road Media
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/sc-drive-v188-camera-road-media.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sc-drive-v188-camera-road-media
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: sc-drive-apk-build
+          fetch-depth: 1
+
+      - name: Publish running pointer
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p build-status
+          cat > build-status/sc-drive-v188-latest.txt <<EOF
+          STATUS=running
+          RUN_ID=$GITHUB_RUN_ID
+          SOURCE_SHA=$GITHUB_SHA
+          ARTIFACT_NAME=SC-Drive-v1.8.8-Camera-Road-Media-CANDIDATE
+          APK_NAME=SC_Drive-v1.8.8-Camera-Road-Media-CANDIDATE.apk
+          APK_SHA256=
+          EOF
+          git config user.name 'SC Drive Build Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add build-status/sc-drive-v188-latest.txt
+          git commit -m 'publish v1.8.8 running pointer [skip ci]' || true
+          git push origin HEAD:sc-drive-apk-build || true
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+
+      - name: Reconstruct v1.8.7 latest feature baseline
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git fetch --depth=1 origin main
+          rm -rf "$PUB_CACHE/hosted/pub.dev/flutter_carplay-1.6.4" || true
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android-final"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' .github/workflows/sc-drive-v182-final-sign.yml 'Reconstruct exact v1.8.2 source' >/tmp/base.sh
+          bash /tmp/base.sh
+          git show origin/main:.github/workflows/sc-drive-v187-camera-awareness-latest.yml > /tmp/v187.yml
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' /tmp/v187.yml 'Apply Camera Awareness and Drive Dynamics overlays' >/tmp/v187-camera-dynamics.sh
+          bash /tmp/v187-camera-dynamics.sh
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' /tmp/v187.yml 'Apply Radio Garden companion overlay' >/tmp/v187-radio.sh
+          bash /tmp/v187-radio.sh
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["android"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' /tmp/v187.yml 'Lock Camera Awareness into latest build and bump v1.8.7' >/tmp/v187-lock.sh
+          bash /tmp/v187-lock.sh
+          grep -n '^version: 1.8.7+33' scdrive-app/pubspec.yaml
+
+      - name: Apply v1.8.8 Camera confidence road corridor and Radio Garden MediaSession
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p build-assets/v188
+          git show origin/main:build-assets/v188/camera_awareness_service.dart > build-assets/v188/camera_awareness_service.dart
+          git show origin/main:build-assets/v188/radio_garden_panel.dart > build-assets/v188/radio_garden_panel.dart
+          git show origin/main:build-assets/v188/apply-v188.sh > build-assets/v188/apply-v188.sh
+          chmod +x build-assets/v188/apply-v188.sh
+          bash build-assets/v188/apply-v188.sh
+
+      - name: Source gates
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -n '^version: 1.8.8+34' scdrive-app/pubspec.yaml
+          grep -q 'CAMERA AHEAD' scdrive-app/lib/features/head_unit/drive_deck_panel.dart
+          grep -q 'CAMERA PASSED' scdrive-app/lib/features/head_unit/drive_deck_panel.dart
+          grep -q 'gpsConfidence: t.gpsConfidence' scdrive-app/lib/features/head_unit/drive_deck_panel.dart
+          grep -q '_acquisitionGpsQualityOk' scdrive-app/lib/features/camera/camera_awareness_service.dart
+          grep -q 'crossTrackMeters' scdrive-app/lib/features/camera/camera_awareness_service.dart
+          grep -q 'enforcement.*traffic_signals' scdrive-app/lib/features/camera/camera_repository.dart
+          grep -q 'RadioGardenMediaSessionBridge' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt
+          grep -q 'com.jonathanpuckey.radiogarden' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/spotify/RadioGardenMediaSessionBridge.kt
+          grep -q 'MEDIA SESSION · LIVE CONTROL' scdrive-app/lib/features/head_unit/radio_garden_panel.dart
+          grep -q 'G-G DIAGRAM' scdrive-app/lib/features/head_unit/drive_dynamics_panel.dart
+          grep -q '_digitalSpeed >= 100' scdrive-app/lib/features/head_unit/head_unit_screen.dart
+          grep -q 'fit: BoxFit.scaleDown' scdrive-app/lib/features/head_unit/head_unit_screen.dart
+          (cd scdrive-app && sha256sum -c /tmp/v181-physics-authority.sha256)
+
+      - name: Require production Google Maps key
+        shell: bash
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${GOOGLE_MAPS_API_KEY:-}"
+          echo 'Production Google Maps key present.'
+
+      - name: Resolve dependencies
+        working-directory: scdrive-app
+        run: |
+          rm -f "$PUB_CACHE/credentials.json" "$HOME/.pub-cache/credentials.json" || true
+          flutter pub get
+
+      - name: Android unit tests
+        working-directory: scdrive-app/android
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: ./gradlew :app:testDebugUnitTest --no-daemon
+
+      - name: Strict Flutter analyze
+        working-directory: scdrive-app
+        run: flutter analyze --no-fatal-infos
+
+      - name: Build release candidate with production Maps
+        working-directory: scdrive-app
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SPOTIFY_CLIENT_ID: ${{ secrets.SPOTIFY_CLIENT_ID }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: |
+          set -euxo pipefail
+          flutter build apk --release \
+            --dart-define=SPOTIFY_CLIENT_ID="${SPOTIFY_CLIENT_ID:-}" \
+            --dart-define=SC_DRIVE_BUILD_PROFILE=production
+
+      - name: Verify and package candidate plus finalization tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APK=scdrive-app/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
+          mkdir -p out/build-tools/lib
+          cp "$APK" out/SC_Drive-v1.8.8-Camera-Road-Media-CANDIDATE.apk
+          cp "$BT/zipalign" out/build-tools/zipalign
+          cp "$BT/apksigner" out/build-tools/apksigner
+          cp "$BT/lib/apksigner.jar" out/build-tools/lib/apksigner.jar
+          cp "$BT/aapt" out/build-tools/aapt
+          chmod +x out/build-tools/zipalign out/build-tools/apksigner out/build-tools/aapt
+          unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'CAMERA AHEAD'
+          unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'MEDIA SESSION · LIVE CONTROL'
+          unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'G-G DIAGRAM'
+          unzip -p "$APK" classes.dex | strings | grep -F -m1 'com.jonathanpuckey.radiogarden'
+          unzip -p "$APK" classes.dex | strings | grep -F -m1 'radio_garden_media_control'
+          "$BT/aapt" dump badging "$APK" | tee out/AAPT-BADGING.txt
+          grep -q "package: name='com.scdeport.scdrive'" out/AAPT-BADGING.txt
+          grep -q "versionCode='34'" out/AAPT-BADGING.txt
+          grep -q "versionName='1.8.8'" out/AAPT-BADGING.txt
+          cat > out/V188-FEATURE-VERIFICATION.txt <<EOF
+          SC Drive v1.8.8+34
+          Camera GPS confidence gate: INCLUDED
+          GPS age/accuracy/speed-accuracy inputs: INCLUDED
+          Road corridor relevance: INCLUDED
+          Recent-track heading blend: INCLUDED
+          Camera poor-GPS grace hold: INCLUDED
+          Camera speed/red-light OSM support: INCLUDED
+          Radio Garden MediaSession bridge: INCLUDED
+          Radio Garden metadata + play/pause/previous/next UI: INCLUDED
+          Radio Garden external companion browsing: INCLUDED
+          Drive Dynamics page 3: INCLUDED
+          Physics authority checksum: PASS
+          Production Google Maps key gate: PASS
+          Android tests: PASS if artifact exists
+          Flutter analyze: PASS if artifact exists
+          Physical head-unit/road validation: REQUIRED
+          EOF
+          sha256sum out/SC_Drive-v1.8.8-Camera-Road-Media-CANDIDATE.apk > out/CANDIDATE.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.8.8-Camera-Road-Media-CANDIDATE
+          path: out/**
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish final pointer
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git fetch origin sc-drive-apk-build
+          git checkout -B sc-drive-apk-build origin/sc-drive-apk-build
+          mkdir -p build-status
+          APK_SHA=''
+          if [[ -f out/CANDIDATE.sha256 ]]; then APK_SHA=$(cut -d' ' -f1 out/CANDIDATE.sha256); fi
+          cat > build-status/sc-drive-v188-latest.txt <<EOF
+          STATUS=${{ job.status }}
+          RUN_ID=$GITHUB_RUN_ID
+          SOURCE_SHA=$GITHUB_SHA
+          ARTIFACT_NAME=SC-Drive-v1.8.8-Camera-Road-Media-CANDIDATE
+          APK_NAME=SC_Drive-v1.8.8-Camera-Road-Media-CANDIDATE.apk
+          APK_SHA256=$APK_SHA
+          EOF
+          git config user.name 'SC Drive Build Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add build-status/sc-drive-v188-latest.txt
+          git commit -m 'publish v1.8.8 candidate pointer [skip ci]' || true
+          git push origin HEAD:sc-drive-apk-build || true
