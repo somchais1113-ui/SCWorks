@@ -156,7 +156,7 @@ jobs:
           cp "$BT/aapt" out/build-tools/aapt
           chmod +x out/build-tools/zipalign out/build-tools/apksigner out/build-tools/aapt
           unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'CAMERA AHEAD'
-          unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'MEDIA SESSION · LIVE CONTROL'
+          unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'RADIO GARDEN'
           unzip -p "$APK" lib/arm64-v8a/libapp.so | strings | grep -F -m1 'G-G DIAGRAM'
           unzip -p "$APK" classes.dex | strings | grep -F -m1 'com.jonathanpuckey.radiogarden'
           unzip -p "$APK" classes.dex | strings | grep -F -m1 'radio_garden_media_control'
