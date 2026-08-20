@@ -1,0 +1,127 @@
+raw is! Map) return;
+     final map = raw.map((key, value) => MapEntry(key.toString(), value));
+@@ -119,12 +132,9 @@
+       _message = null;
+     });
+     try {
+-      final launched = await launchUrl(
+-        uri,
+-        mode: LaunchMode.externalApplication,
+-      );
++      final launched = await _favoritesStore.openRadioGarden(uri.toString());
+       if (!launched && mounted) {
+-        setState(() => _message = 'UNABLE TO OPEN RADIO GARDEN');
++        setState(() => _message = 'RADIO GARDEN APP NOT INSTALLED');
+       }
+     } catch (_) {
+       if (mounted) setState(() => _message = 'RADIO GARDEN NOT AVAILABLE');
+@@ -133,6 +143,162 @@
+     }
+   }
+ 
++  Future<void> _openFavorite(MediaFavorite favorite) async {
++    final launched = await _favoritesStore.openRadioGarden(favorite.uri);
++    if (!launched && mounted) {
++      setState(() => _message = 'RADIO GARDEN APP NOT INSTALLED');
++    }
++  }
++
++  Future<void> _showFavorites() async {
++    await _favoritesStore.initialize();
++    if (!mounted) return;
++    await showModalBottomSheet<void>(
++      context: context,
++      backgroundColor: const Color(0xFF0D1117),
++      isScrollControlled: true,
++      builder: (sheetContext) {
++        return AnimatedBuilder(
++          animation: _favoritesStore,
++          builder: (context, _) {
++            final items = _favoritesStore.favoritesFor(
++              MediaFavoriteKind.radioGarden,
++            );
++            return SafeArea(
++              child: SizedBox(
++                height: MediaQuery.sizeOf(context).height * 0.72,
++                child: Padding(
++                  padding: const EdgeInsets.fromLTRB(22, 18, 22, 18),
++                  child: Column(
++                    crossAxisAlignment: CrossAxisAlignment.stretch,
++                    children: <Widget>[
++                      Row(
++                        children: <Widget>[
++                          const Icon(
++                            Icons.favorite_rounded,
++                            color: Color(0xFF65D996),
++                          ),
++                          const SizedBox(width: 10),
++                          const Text(
++                            'SC DRIVE RADIO FAVORITES',
++                            style: TextStyle(
++                              color: Colors.white,
++                              fontFamily: 'NissanBrand',
++                              fontSize: 18,
++                              fontWeight: FontWeight.w700,
++                              letterSpacing: 0.5,
++                            ),
++                          ),
++                          const Spacer(),
++                          Text(
++                            '${items.length} SAVED',
++                            style: const TextStyle(
++                              color: Color(0xFF7F8A96),
++                              fontFamily: 'NissanBrand',
++                              fontSize: 10,
++                              fontWeight: FontWeight.w700,
++                            ),
++                          ),
++                        ],
++                      ),
++                      const SizedBox(height: 14),
++                      if (items.isEmpty)
++                        const Expanded(
++                          child: Center(
++                            child: Text(
++                              'In Radio Garden: SHARE  →  SC DRIVE
++Save each station once, then launch it from here.',
++                              textAlign: TextAlign.center,
++                              style: TextStyle(
++                                color: Color(0xFF8994A3),
++                                fontFamily: 'NissanBrand',
++                                fontSize: 13,
++                                height: 1.55,
++                              ),
++                            ),
++                          ),
++                        )
++                      else
++                        Expanded(
++                          child: ListView.separated(
++                            itemCount: items.length,
++                            separatorBuilder: (_, __) => const Divider(
++                              color: Color(0xFF252C34),
++                              height: 1,
++                            ),
++                            itemBuilder: (context, index) {
++                              final favorite = items[index];
++                              return ListTile(
++                                contentPadding: const EdgeInsets.symmetric(
++                                  horizontal: 4,
++                                  vertical: 6,
++                                ),
++                                leading: const CircleAvatar(
++                                  backgroundColor: Color(0xFF15231C),
++                                  child: Icon(
++                                    Icons.public_rounded,
++                                    color: Color(0xFF65D996),
++                                  ),
++                                ),
++                                title: Text(
++                                  favorite.label,
++                                  maxLines: 1,
++                                  overflow: TextOverflow.ellipsis,
++                                  style: const TextStyle(
++                                    color: Colors.white,
++                                    fontFamily: 'NissanBrand',
++                                    fontWeight: FontWeight.w700,
++                    
