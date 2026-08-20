@@ -1,0 +1,79 @@
+VehicleStateListener: ((ObdTelemetryState) -> Unit)? = null
++    private var pendingRadioGardenShare: String? = null
+ 
+     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+         super.configureFlutterEngine(flutterEngine)
++        captureRadioGardenShare(intent)
+ 
+         val speedEngine = VehicleSpeedEngineRegistry.get(this)
+         vehicleSpeedEngine = speedEngine
+@@ -78,6 +82,26 @@
+                     "toggleplaypause" -> result.success(spotifyBridge.togglePlayPause())
+                     "next" -> result.success(spotifyBridge.next())
+                     "previous" -> result.success(spotifyBridge.previous())
++                    "openspotify" -> result.success(spotifyBridge.openSpotify(call.argument<String>("uri")))
++                    else -> result.notImplemented()
++                }
++            }
++
++        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, companionAppsChannel)
++            .setMethodCallHandler { call, result ->
++                when (call.method.lowercase()) {
++                    "openradiogarden" -> result.success(
++                        openExplicitUri(
++                            "com.jonathanpuckey.radiogarden",
++                            call.argument<String>("url")
++                        )
++                    )
++                    "isradiogardeninstalled" -> result.success(isPackageInstalled("com.jonathanpuckey.radiogarden"))
++                    "consumeradiogardenshare" -> {
++                        val shared = pendingRadioGardenShare
++                        pendingRadioGardenShare = null
++                        result.success(shared)
++                    }
+                     else -> result.notImplemented()
+                 }
+             }
+@@ -221,6 +245,54 @@
+         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+     }
+ 
++    override fun onNewIntent(intent: Intent) {
++        super.onNewIntent(intent)
++        setIntent(intent)
++        captureRadioGardenShare(intent)
++    }
++
++    private fun captureRadioGardenShare(intent: Intent?) {
++        if (intent == null) return
++        val candidates = mutableListOf<String>()
++        intent.dataString?.let(candidates::add)
++        if (intent.action == Intent.ACTION_SEND) {
++            intent.getStringExtra(Intent.EXTRA_TEXT)?.let(candidates::add)
++        }
++        val match = candidates.asSequence()
++            .flatMap { Regex("https?://(?:www\\.)?radio\\.garden/[^\\s]+", RegexOption.IGNORE_CASE).findAll(it).map { found -> found.value } }
++            .firstOrNull { it.contains("/listen/", ignoreCase = true) }
++        if (match != null) pendingRadioGardenShare = match
++    }
++
++    private fun isPackageInstalled(packageName: String): Boolean {
++        return try {
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
++                packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
++            } else {
++                @Suppress("DEPRECATION")
++                packageManager.getPackageInfo(packageName, 0)
++            }
++            true
++        } catch (_: Exception) {
++            false
++        }
++    }
++
++    private fun openExplicitUri(packageName: String, rawUrl: String?): Boolean {
++        val url = rawUrl?.trim().orEmpty()
++        if (url.isEmpty() || !isPackageInstalled(packageName)) return false
++        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
++            setPackage(packageName)
++
