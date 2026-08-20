@@ -1,0 +1,4 @@
+STATUS=success
+RUN_ID=32330567046
+SOURCE_SHA=3b212d59fefda8d172d2adbfc76f49f9a8f15c45
+ARTIFACT_NAME=SC-Drive-v1.8.8-Media-Source-Inspect
