@@ -58,16 +58,18 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p out/lib/features/head_unit out/android/spotify out/android/root
-          cp scdrive-app/lib/features/head_unit/*spotify* out/lib/features/head_unit/ 2>/dev/null || true
-          cp scdrive-app/lib/features/head_unit/*media* out/lib/features/head_unit/ 2>/dev/null || true
+          mkdir -p out/lib/features/head_unit out/lib/services out/lib/domain/spotify out/lib/widgets out/android/spotify out/android/root
+          cp scdrive-app/lib/features/head_unit/head_unit_screen.dart out/lib/features/head_unit/
           cp scdrive-app/lib/features/head_unit/radio_garden_panel.dart out/lib/features/head_unit/
+          cp scdrive-app/lib/services/spotify_service.dart out/lib/services/
+          cp scdrive-app/lib/domain/spotify/spotify_models.dart out/lib/domain/spotify/
+          cp scdrive-app/lib/widgets/spotify_live_progress.dart out/lib/widgets/
           cp scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/spotify/*.kt out/android/spotify/
           cp scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt out/android/root/
           cp scdrive-app/android/app/src/main/AndroidManifest.xml out/android/root/
           cp scdrive-app/pubspec.yaml out/
           find scdrive-app/lib -type f | grep -Ei 'spotify|media|radio' > out/media-files.txt || true
-          grep -RniE 'spotify|open.spotify|url_launcher|launchUrl' scdrive-app/lib/features/head_unit > out/media-grep.txt || true
+          grep -RniE 'spotify|open.spotify|url_launcher|launchUrl' scdrive-app/lib/features/head_unit scdrive-app/lib/services/spotify_service.dart > out/media-grep.txt || true
 
       - uses: actions/upload-artifact@v4
         with:
