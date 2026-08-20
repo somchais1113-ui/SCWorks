@@ -1,0 +1,91 @@
+     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
++        }
++        return try {
++            startActivity(intent)
++            true
++        } catch (_: Exception) {
++            false
++        }
++    }
++
+     override fun onResume() {
+         super.onResume()
+         carRadioBridge?.refresh()
+--- a/scdrive-app/android/app/src/main/AndroidManifest.xml
++++ b/scdrive-app/android/app/src/main/AndroidManifest.xml
+@@ -84,6 +84,11 @@
+                 <action android:name="android.intent.action.MAIN"/>
+                 <category android:name="android.intent.category.LAUNCHER"/>
+             </intent-filter>
++            <intent-filter>
++                <action android:name="android.intent.action.SEND" />
++                <category android:name="android.intent.category.DEFAULT" />
++                <data android:mimeType="text/plain" />
++            </intent-filter>
+             <!-- Head-unit mode: declaring CATEGORY_HOME lets the user choose
+                  SC Drive as the default launcher. Android then brings this
+                  activity up as Home after the head unit boots. -->
+@@ -115,6 +120,7 @@
+         <package android:name="com.mediatek.FMRadio" />
+         <package android:name="com.sec.android.app.fm" />
+         <package android:name="com.spotify.music" />
++        <package android:name="com.jonathanpuckey.radiogarden" />
+         <intent>
+             <action android:name="android.intent.action.PROCESS_TEXT"/>
+             <data android:mimeType="text/plain"/>
+--- a/scdrive-app/lib/services/spotify_service.dart
++++ b/scdrive-app/lib/services/spotify_service.dart
+@@ -6,7 +6,6 @@
+ import 'package:flutter_appauth/flutter_appauth.dart';
+ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+ import 'package:http/http.dart' as http;
+-import 'package:url_launcher/url_launcher.dart';
+ 
+ import '../app/app_config.dart';
+ import '../domain/spotify/spotify_models.dart';
+@@ -470,10 +469,109 @@
+     await transferToPreferredCar();
+   }
+ 
+-  Future<void> openSpotify({String? url}) async {
+-    final target = Uri.tryParse(url ?? 'https://open.spotify.com');
+-    if (target == null) return;
+-    await launchUrl(target, mode: LaunchMode.externalApplication);
++  Future<bool> openSpotify({String? spotifyUri, String? url}) async {
++    final target = spotifyUri ?? _spotifyUriFromWebUrl(url) ?? 'spotify:';
++    if (defaultTargetPlatform != TargetPlatform.android) {
++      _errorMessage = 'Spotify direct-app launch is available on Android.';
++      notifyListeners();
++      return false;
++    }
++    try {
++      final opened = await _spotifyMediaControl.invokeMethod<bool>(
++            'openSpotify',
++            <String, Object?>{'uri': target},
++          ) ??
++          false;
++      if (!opened) {
++        _errorMessage = 'Spotify app is not installed on this head unit.';
++        notifyListeners();
++      }
++      return opened;
++    } on PlatformException catch (error) {
++      _errorMessage = error.message ?? 'Unable to open Spotify app.';
++      notifyListeners();
++      return false;
++    } on MissingPluginException {
++      _errorMessage = 'Spotify app launcher is not available.';
++      notifyListeners();
++      return false;
++    }
++  }
++
++  Future<bool> playSpotifyUri(
++    String? spotifyUri, {
++    String? fallbackUrl,
++  }) async {
++    final uri = spotifyUri?.trim();
++    if (uri == null || uri.isEmpty) {
++      return openSpotify(url: fallbackUrl);
++    }
++    if (!authenticated) {
