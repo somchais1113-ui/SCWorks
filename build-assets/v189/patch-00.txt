@@ -1,0 +1,179 @@
+--- a/lib/services/spotify_service.dart
++++ b/lib/services/spotify_service.dart
+@@ -6,10 +6,10 @@
+ import 'package:flutter_appauth/flutter_appauth.dart';
+ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+ import 'package:http/http.dart' as http;
+-import 'package:url_launcher/url_launcher.dart';
+ 
+ import '../app/app_config.dart';
+ import '../domain/spotify/spotify_models.dart';
++import 'media_favorites_service.dart';
+ 
+ class SpotifyService extends ChangeNotifier {
+   SpotifyService({http.Client? client}) : _client = client ?? http.Client();
+@@ -142,6 +142,7 @@
+     if (_initialized) return;
+     _initialized = true;
+ 
++    await MediaFavoritesService.instance.initialize();
+     await _initializeRealtimeBridge();
+ 
+     if (!configured) {
+@@ -471,9 +472,101 @@
+   }
+ 
+   Future<void> openSpotify({String? url}) async {
+-    final target = Uri.tryParse(url ?? 'https://open.spotify.com');
+-    if (target == null) return;
+-    await launchUrl(target, mode: LaunchMode.externalApplication);
++    final ok = await MediaFavoritesService.instance.openSpotify(url);
++    if (!ok) {
++      _errorMessage = 'Spotify app is not installed on this head unit.';
++      notifyListeners();
++    }
++  }
++
++  Future<bool> playPlaylist(SpotifyPlaylist playlist) async {
++    final uri = playlist.spotifyUri?.trim();
++    if (uri == null || uri.isEmpty) {
++      await openSpotify(url: playlist.externalUrl);
++      return false;
++    }
++    return _playSpotifyUri(
++      uri,
++      contextPlayback: true,
++      label: playlist.name,
++    );
++  }
++
++  Future<bool> playTrack(SpotifyTrack track) async {
++    final uri = track.spotifyUri?.trim();
++    if (uri == null || uri.isEmpty) {
++      await openSpotify(url: track.externalUrl);
++      return false;
++    }
++    return _playSpotifyUri(
++      uri,
++      contextPlayback: false,
++      label: track.name,
++    );
++  }
++
++  Future<bool> _playSpotifyUri(
++    String spotifyUri, {
++    required bool contextPlayback,
++    required String label,
++  }) async {
++    if (!authenticated) {
++      _errorMessage = 'Spotify sign-in is required.';
++      notifyListeners();
++      return false;
++    }
++
++    try {
++      await refreshDevices();
++      SpotifyDevice? target = preferredCarDevice;
++      if (target == null || !target.controllable) {
++        for (final device in _devices) {
++          if (device.isActive && device.controllable) {
++            target = device;
++            break;
++          }
++        }
++      }
++      if (target == null || !target.controllable) {
++        for (final device in _devices) {
++          if (device.controllable) {
++            target = device;
++            break;
++          }
++        }
++      }
++
++      if (target == null) {
++        _errorMessage =
++            'Open Spotify on the head unit once so SC Drive can see the car player.';
++        notifyListeners();
++        await openSpotify(url: spotifyUri);
++        return false;
++      }
++
++      final deviceId = Uri.encodeQueryComponent(target.id);
++      final body = contextPlayback
++          ? <String, Object>{'context_uri': spotifyUri}
++          : <String, Object>{
++              'uris': <String>[spotifyUri],
++            };
++      await _putJson('/me/player/play?device_id=$deviceId', body);
++      await setPreferredCarDevice(target);
++      await MediaFavoritesService.instance.saveSpotify(
++        uri: spotifyUri,
++        label: label,
++        subtitle: contextPlayback ? 'Spotify playlist' : 'Spotify track',
++      );
++      await Future<void>.delayed(const Duration(milliseconds: 260));
++      await refreshNowPlaying();
++      _errorMessage = null;
++      notifyListeners();
++      return true;
++    } catch (error) {
++      _errorMessage = _friendlyError(error);
++      notifyListeners();
++      return false;
++    }
+   }
+ 
+   Future<void> _initializeRealtimeBridge() async {
+--- a/lib/features/head_unit/radio_garden_panel.dart
++++ b/lib/features/head_unit/radio_garden_panel.dart
+@@ -2,7 +2,8 @@
+ 
+ import 'package:flutter/material.dart';
+ import 'package:flutter/services.dart';
+-import 'package:url_launcher/url_launcher.dart';
++
++import '../../services/media_favorites_service.dart';
+ 
+ class RadioGardenPanel extends StatefulWidget {
+   const RadioGardenPanel({
+@@ -24,9 +25,10 @@
+ 
+   static final Uri _home = Uri.parse('https://radio.garden/');
+   static final Uri _search = Uri.parse('https://radio.garden/search');
+-  static final Uri _favorites = Uri.parse('https://radio.garden/favorites');
+   static final Uri _browse = Uri.parse('https://radio.garden/browse');
+ 
++  final MediaFavoritesService _favoritesStore = MediaFavoritesService.instance;
++
+   StreamSubscription<dynamic>? _mediaSubscription;
+   bool _opening = false;
+   bool _permissionGranted = false;
+@@ -40,6 +42,8 @@
+   @override
+   void initState() {
+     super.initState();
++    _favoritesStore.addListener(_onFavoritesChanged);
++    unawaited(_favoritesStore.initialize());
+     _mediaSubscription = _mediaEvents.receiveBroadcastStream().listen(
+       _onMediaEvent,
+       onError: (_) {
+@@ -56,10 +60,19 @@
+ 
+   @override
+   void dispose() {
++    _favoritesStore.removeListener(_onFavoritesChanged);
+     _mediaSubscription?.cancel();
+     super.dispose();
+   }
+ 
++  void _onFavoritesChanged() {
++    if (!mounted) return;
++    final shared = _favoritesStore.lastShareMessage;
++    setState(() {
++      if (shared != null && shared.isNotEmpty) _message = shared;
++    });
++  }
++
+   void _onMediaEvent(dynamic raw) {
+     if (
