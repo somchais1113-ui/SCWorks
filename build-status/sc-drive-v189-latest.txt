@@ -1,4 +1,4 @@
-STATUS=failure
+STATUS=running
 RUN_ID=32340244565
 SOURCE_SHA=2a751ea9056c3bb2cff70f20a7f001c8dec2aef7
 ARTIFACT_NAME=SC-Drive-v1.8.9-Native-Media-Favorites-CANDIDATE
