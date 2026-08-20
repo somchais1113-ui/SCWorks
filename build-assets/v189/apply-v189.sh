@@ -12,6 +12,17 @@ python3 - <<'PY'
 from pathlib import Path
 
 root = Path('scdrive-app')
+
+# Patch chunks are stored as text assets. Normalize the intentional line break
+# in the Radio Garden empty state back to a Dart escaped newline before format.
+radio = root / 'lib/features/head_unit/radio_garden_panel.dart'
+rs = radio.read_text()
+broken = "'In Radio Garden: SHARE  →  SC DRIVE\nSave each station once, then launch it from here.'"
+fixed = "'In Radio Garden: SHARE  →  SC DRIVE\\nSave each station once, then launch it from here.'"
+if broken in rs:
+    rs = rs.replace(broken, fixed, 1)
+radio.write_text(rs)
+
 main = root / 'android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt'
 s = main.read_text()
 
