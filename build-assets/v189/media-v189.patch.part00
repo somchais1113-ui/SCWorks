@@ -81,4 +81,20 @@
 @@ -45,9 +47,11 @@
      private var vehicleStateEventStream: VehicleStateEventStream? = null
      private var speedVehicleStateListener: ((VehicleSpeedState) -> Unit)? = null
-     private var obd
+     private var obdVehicleStateListener: ((ObdTelemetryState) -> Unit)? = null
++    private var pendingRadioGardenShare: String? = null
+ 
+     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+         super.configureFlutterEngine(flutterEngine)
++        captureRadioGardenShare(intent)
+ 
+         val speedEngine = VehicleSpeedEngineRegistry.get(this)
+         vehicleSpeedEngine = speedEngine
+@@ -78,6 +82,26 @@
+                     "toggleplaypause" -> result.success(spotifyBridge.togglePlayPause())
+                     "next" -> result.success(spotifyBridge.next())
+                     "previous" -> result.success(spotifyBridge.previous())
++                    "openspotify" -> result.success(spotifyBridge.openSpotify(call.argument<String>("uri")))
++                    else -> result.notImplemented()
++                }
++            }
