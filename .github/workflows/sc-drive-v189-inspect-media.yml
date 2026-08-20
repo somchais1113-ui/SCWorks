@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   inspect:
@@ -75,3 +75,23 @@ jobs:
           path: out/**
           if-no-files-found: error
           retention-days: 3
+
+      - name: Publish inspect pointer
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git fetch origin sc-drive-apk-build
+          git checkout -B sc-drive-apk-build origin/sc-drive-apk-build
+          mkdir -p build-status
+          cat > build-status/sc-drive-v189-media-inspect.txt <<EOF
+          STATUS=${{ job.status }}
+          RUN_ID=$GITHUB_RUN_ID
+          SOURCE_SHA=$GITHUB_SHA
+          ARTIFACT_NAME=SC-Drive-v1.8.8-Media-Source-Inspect
+          EOF
+          git config user.name 'SC Drive Build Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add build-status/sc-drive-v189-media-inspect.txt
+          git commit -m 'publish v1.8.9 media inspect pointer [skip ci]' || true
+          git push origin HEAD:sc-drive-apk-build || true
