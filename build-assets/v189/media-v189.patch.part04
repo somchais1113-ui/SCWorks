@@ -1,63 +1,3 @@
-potify.playSpotifyUri(
-+                                recent.track.spotifyUri,
-+                                fallbackUrl: recent.track.externalUrl,
-                               ),
-                             );
-                           },
---- a/scdrive-app/lib/features/head_unit/radio_garden_panel.dart
-+++ b/scdrive-app/lib/features/head_unit/radio_garden_panel.dart
-@@ -1,8 +1,9 @@
- import 'dart:async';
-+import 'dart:convert';
- 
- import 'package:flutter/material.dart';
- import 'package:flutter/services.dart';
--import 'package:url_launcher/url_launcher.dart';
-+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
- 
- class RadioGardenPanel extends StatefulWidget {
-   const RadioGardenPanel({
-@@ -16,11 +17,16 @@
-   State<RadioGardenPanel> createState() => _RadioGardenPanelState();
- }
- 
--class _RadioGardenPanelState extends State<RadioGardenPanel> {
-+class _RadioGardenPanelState extends State<RadioGardenPanel> with WidgetsBindingObserver {
-   static const MethodChannel _mediaControl =
-       MethodChannel('com.scdeport.scdrive/radio_garden_media_control');
-   static const EventChannel _mediaEvents =
-       EventChannel('com.scdeport.scdrive/radio_garden_media');
-+  static const MethodChannel _companionApps =
-+      MethodChannel('com.scdeport.scdrive/companion_apps');
-+  static const FlutterSecureStorage _storage = FlutterSecureStorage();
-+  static const String _favoritesKey = 'sc_drive_radio_garden_favorites_v1';
-+  static const String _lastStationKey = 'sc_drive_radio_garden_last_station_v1';
- 
-   static final Uri _home = Uri.parse('https://radio.garden/');
-   static final Uri _search = Uri.parse('https://radio.garden/search');
-@@ -36,10 +42,14 @@
-   String? _artist;
-   String? _album;
-   String? _message;
-+  List<_SavedStation> _savedStations = const <_SavedStation>[];
-+  _SavedStation? _lastStation;
-+  bool _radioGardenInstalled = true;
- 
-   @override
-   void initState() {
-     super.initState();
-+    WidgetsBinding.instance.addObserver(this);
-     _mediaSubscription = _mediaEvents.receiveBroadcastStream().listen(
-       _onMediaEvent,
-       onError: (_) {
-@@ -51,15 +61,118 @@
-         }
-       },
-     );
--    unawaited(_refreshMedia());
-+    unawaited(_initializeCompanion());
-   }
- 
    @override
    void dispose() {
 +    WidgetsBinding.instance.removeObserver(this);
@@ -96,4 +36,65 @@ potify.playSpotifyUri(
 +        final decoded = jsonDecode(raw);
 +        if (decoded is List) {
 +          for (final item in decoded.whereType<Map>()) {
-+            final station = _SavedStati
++            final station = _SavedStation.fromMap(item);
++            if (station != null) stations.add(station);
++          }
++        }
++      } catch (_) {}
++    }
++    _SavedStation? last;
++    if (lastRaw != null && lastRaw.isNotEmpty) {
++      try {
++        final decoded = jsonDecode(lastRaw);
++        if (decoded is Map) last = _SavedStation.fromMap(decoded);
++      } catch (_) {}
++    }
++    if (!mounted) return;
++    setState(() {
++      _savedStations = stations.take(12).toList(growable: false);
++      _lastStation = last;
++    });
++  }
++
++  Future<void> _consumeSharedStation() async {
++    try {
++      final shared = await _companionApps.invokeMethod<String>('consumeRadioGardenShare');
++      if (shared == null || !_isStationUrl(shared)) return;
++      await _saveStation(shared, label: _title ?? _stationLabelFromUrl(shared));
++      if (mounted) setState(() => _message = 'STATION SAVED TO SC DRIVE');
++    } catch (_) {}
++  }
++
++  bool _isStationUrl(String value) {
++    final uri = Uri.tryParse(value);
++    return uri != null &&
++        uri.host.toLowerCase().endsWith('radio.garden') &&
++        uri.path.toLowerCase().contains('/listen/');
++  }
++
++  String _stationLabelFromUrl(String value) {
++    final uri = Uri.tryParse(value);
++    if (uri == null) return 'RADIO GARDEN';
++    final parts = uri.pathSegments.where((part) => part.isNotEmpty).toList();
++    final listen = parts.indexWhere((part) => part.toLowerCase() == 'listen');
++    if (listen >= 0 && listen + 1 < parts.length) {
++      return parts[listen + 1]
++          .replaceAll('-', ' ')
++          .split(' ')
++          .where((part) => part.isNotEmpty)
++          .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
++          .join(' ');
++    }
++    return 'RADIO GARDEN';
++  }
++
++  Future<void> _saveStation(String url, {required String label}) async {
++    if (!_isStationUrl(url)) return;
++    final station = _SavedStation(label: label.trim().isEmpty ? 'RADIO GARDEN' : label.trim(), url: url);
++    final next = <_SavedStation>[
++      station,
++      ..._savedStations.where((item) => item.url != url),
++    ].take(12).toList(growable: false);
++    await _storage.write(
++      key: _favoritesKey,
++      value: jsonEncode(next.map((item) => item.toMap()).toList()),
