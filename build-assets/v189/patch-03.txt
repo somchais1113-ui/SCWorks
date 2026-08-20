@@ -1,0 +1,117 @@
+All();
++  if (!context.mounted) return;
++  await showDialog<void>(
++    context: context,
++    builder: (dialogContext) {
++      return Dialog(
++        backgroundColor: const Color(0xFF0D1117),
++        insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
++        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
++        child: SizedBox(
++          width: 820,
++          height: 520,
++          child: Padding(
++            padding: const EdgeInsets.fromLTRB(22, 20, 22, 18),
++            child: AnimatedBuilder(
++              animation: spotify,
++              builder: (context, _) {
++                final playlists = spotify.playlists;
++                final recent = spotify.recent;
++                return Column(
++                  crossAxisAlignment: CrossAxisAlignment.stretch,
++                  children: <Widget>[
++                    Row(
++                      children: <Widget>[
++                        const Icon(
++                          Icons.graphic_eq_rounded,
++                          color: Color(0xFF1ED760),
++                          size: 24,
++                        ),
++                        const SizedBox(width: 10),
++                        const Text(
++                          'SPOTIFY LIBRARY',
++                          style: TextStyle(
++                            color: Colors.white,
++                            fontSize: 19,
++                            fontWeight: FontWeight.w900,
++                            letterSpacing: 0.8,
++                          ),
++                        ),
++                        const Spacer(),
++                        const Text(
++                          'PLAY INSIDE SC DRIVE',
++                          style: TextStyle(
++                            color: Color(0xFF1ED760),
++                            fontSize: 9.5,
++                            fontWeight: FontWeight.w900,
++                            letterSpacing: 0.7,
++                          ),
++                        ),
++                        const SizedBox(width: 12),
++                        IconButton(
++                          onPressed: () => Navigator.of(dialogContext).pop(),
++                          icon: const Icon(
++                            Icons.close_rounded,
++                            color: Color(0xFF8994A3),
++                          ),
++                        ),
++                      ],
++                    ),
++                    const SizedBox(height: 14),
++                    Expanded(
++                      child: Row(
++                        crossAxisAlignment: CrossAxisAlignment.stretch,
++                        children: <Widget>[
++                          Expanded(
++                            child: _SpotifyLibraryColumn(
++                              title: 'PLAYLISTS',
++                              emptyText: 'No playlists available',
++                              children: playlists.map((playlist) {
++                                return _SpotifyLibraryItem(
++                                  title: playlist.name,
++                                  subtitle: playlist.ownerName ?? 'PLAYLIST',
++                                  artworkUrl: playlist.artworkUrl,
++                                  icon: Icons.queue_music_rounded,
++                                  onTap: () async {
++                                    final ok = await spotify.playPlaylist(playlist);
++                                    if (ok && dialogContext.mounted) {
++                                      Navigator.of(dialogContext).pop();
++                                    }
++                                  },
++                                );
++                              }).toList(growable: false),
++                            ),
++                          ),
++                          const SizedBox(width: 16),
++                          Expanded(
++                            child: _SpotifyLibraryColumn(
++                              title: 'RECENT',
++                              emptyText: 'No recent tracks available',
++                              children: recent.map((item) {
++                                final track = item.track;
++                                return _SpotifyLibraryItem(
++                                  title: track.name,
++                                  subtitle: track.artistLine.isEmpty
++                                      ? 'RECENT TRACK'
++                                      : track.artistLine,
++                                  artworkUrl: track.artworkUrl,
++                                  icon: Icons.history_rounded,
++                                  onTap: () async {
++                                    final ok = await spotify.playTrack(track);
++                                    if (ok && dialogContext.mounted) {
++                                      Navigator.of(dialogContext).pop();
++                                    }
++                                  },
++                                );
++                              }).toList(growable: false),
++                            ),
++                          ),
++                        ],
++                      ),
++                    ),
++                    if (spotify.errorMessage != null) ...<Widget>[
++                      const SizedBox(height: 10),
++                      Text(
++                        spotify.errorMessage!,
++                        textAlign: TextAlign.center,
++                    
