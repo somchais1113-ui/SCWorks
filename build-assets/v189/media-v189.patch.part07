@@ -1,0 +1,54 @@
+['url']?.toString().trim();
++    if (label == null || label.isEmpty || url == null || url.isEmpty) return null;
++    return _SavedStation(label: label, url: url);
++  }
++}
++
++class _StationChip extends StatelessWidget {
++  const _StationChip({
++    required this.compact,
++    required this.icon,
++    required this.label,
++    required this.onTap,
++  });
++  final bool compact;
++  final IconData icon;
++  final String label;
++  final VoidCallback? onTap;
++
++  @override
++  Widget build(BuildContext context) {
++    return Material(
++      color: const Color(0xFF151B22),
++      borderRadius: BorderRadius.circular(999),
++      child: InkWell(
++        onTap: onTap,
++        borderRadius: BorderRadius.circular(999),
++        child: Container(
++          constraints: BoxConstraints(maxWidth: compact ? 130 : 170),
++          padding: EdgeInsets.symmetric(horizontal: compact ? 9 : 11),
++          decoration: BoxDecoration(
++            borderRadius: BorderRadius.circular(999),
++            border: Border.all(color: const Color(0xFF313943)),
++          ),
++          child: Row(
++            mainAxisSize: MainAxisSize.min,
++            children: <Widget>[
++              Icon(icon, size: compact ? 12 : 14, color: const Color(0xFF65D996)),
++              const SizedBox(width: 5),
++              Flexible(
++                child: Text(
++                  label,
++                  maxLines: 1,
++                  overflow: TextOverflow.ellipsis,
++                  style: TextStyle(
++                    color: const Color(0xFFD8DEE5),
++                    fontFamily: 'NissanBrand',
++                    fontSize: compact ? 8 : 9.5,
++                    fontWeight: FontWeight.w700,
++                  ),
++                ),
++              ),
+             ],
+           ),
+         ),
