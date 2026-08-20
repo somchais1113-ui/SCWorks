@@ -1,0 +1,146 @@
+               ),
++                                ),
++                                subtitle: Text(
++                                  favorite.subtitle ?? 'RADIO GARDEN',
++                                  maxLines: 1,
++                                  overflow: TextOverflow.ellipsis,
++                                  style: const TextStyle(
++                                    color: Color(0xFF7F8A96),
++                                    fontFamily: 'NissanBrand',
++                                    fontSize: 10,
++                                  ),
++                                ),
++                                trailing: IconButton(
++                                  tooltip: 'Remove',
++                                  icon: const Icon(
++                                    Icons.delete_outline_rounded,
++                                    color: Color(0xFF7F8A96),
++                                  ),
++                                  onPressed: () => unawaited(
++                                    _favoritesStore.removeFavorite(favorite),
++                                  ),
++                                ),
++                                onTap: () {
++                                  Navigator.of(sheetContext).pop();
++                                  unawaited(_openFavorite(favorite));
++                                },
++                              );
++                            },
++                          ),
++                        ),
++                      const SizedBox(height: 12),
++                      const Text(
++                        'Favorites are stored by SC Drive. Radio Garden remains the audio engine.',
++                        textAlign: TextAlign.center,
++                        style: TextStyle(
++                          color: Color(0xFF69737F),
++                          fontFamily: 'NissanBrand',
++                          fontSize: 10,
++                        ),
++                      ),
++                    ],
++                  ),
++                ),
++              ),
++            );
++          },
++        );
++      },
++    );
++  }
++
+   @override
+   Widget build(BuildContext context) {
+     final compact = widget.compact;
+@@ -140,7 +306,9 @@
+     final secondary = _artist ??
+         _album ??
+         (_permissionGranted
+-            ? 'Open a station in Radio Garden'
++            ? (_favoritesStore.favoritesFor(MediaFavoriteKind.radioGarden).isEmpty
++                ? 'Share a station to SC Drive once to save it'
++                : '${_favoritesStore.favoritesFor(MediaFavoriteKind.radioGarden).length} saved stations')
+             : 'Enable media access for live controls');
+ 
+     return Container(
+@@ -322,9 +490,10 @@
+               Expanded(
+                 child: _GardenAction(
+                   compact: compact,
+-                  icon: Icons.favorite_border_rounded,
+-                  label: 'FAVORITES',
+-                  onTap: _opening ? null : () => unawaited(_open(_favorites)),
++                  icon: Icons.favorite_rounded,
++                  label:
++                      'FAVORITES ${_favoritesStore.favoritesFor(MediaFavoriteKind.radioGarden).length}',
++                  onTap: _opening ? null : () => unawaited(_showFavorites()),
+                 ),
+               ),
+               SizedBox(width: compact ? 7 : 9),
+--- a/lib/features/head_unit/head_unit_screen.dart
++++ b/lib/features/head_unit/head_unit_screen.dart
+@@ -819,6 +819,10 @@
+                           _showSpotifyDeviceDialog(context, spotify),
+                     ),
+                     const SizedBox(width: 8),
++                    _SpotifyLibraryButton(
++                      onTap: () => _showSpotifyLibraryDialog(context, spotify),
++                    ),
++                    const SizedBox(width: 8),
+                     GestureDetector(
+                       behavior: HitTestBehavior.opaque,
+                       onTap: spotify.realtimePermissionGranted
+@@ -1060,6 +1064,327 @@
+   return Icons.cloud_queue_rounded;
+ }
+ 
++class _SpotifyLibraryButton extends StatelessWidget {
++  const _SpotifyLibraryButton({required this.onTap});
++
++  final VoidCallback onTap;
++
++  @override
++  Widget build(BuildContext context) {
++    return Material(
++      color: const Color(0xFF161D26),
++      borderRadius: BorderRadius.circular(999),
++      child: InkWell(
++        onTap: onTap,
++        borderRadius: BorderRadius.circular(999),
++        child: Container(
++          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
++          decoration: BoxDecoration(
++            borderRadius: BorderRadius.circular(999),
++            border: Border.all(color: const Color(0xFF3C4654)),
++          ),
++          child: const Row(
++            mainAxisSize: MainAxisSize.min,
++            children: <Widget>[
++              Icon(
++                Icons.library_music_rounded,
++                color: Color(0xFF1ED760),
++                size: 14,
++              ),
++              SizedBox(width: 5),
++              Text(
++                'LIBRARY',
++                style: TextStyle(
++                  color: Color(0xFFB9F6CC),
++                  fontSize: 8.5,
++                  fontWeight: FontWeight.w900,
++                  letterSpacing: 0.25,
++                ),
++              ),
++            ],
++          ),
++        ),
++      ),
++    );
++  }
++}
++
++Future<void> _showSpotifyLibraryDialog(
++  BuildContext context,
++  SpotifyService spotify,
++) async {
++  await spotify.refresh
