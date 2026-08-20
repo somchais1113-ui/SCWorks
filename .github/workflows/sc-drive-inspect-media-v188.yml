@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   inspect:
@@ -58,9 +58,27 @@ jobs:
           echo '=== SPOTIFY DART/KOTLIN CONTENT ==='
           while IFS= read -r f; do
             echo "===== $f ====="
-            sed -n '1,320p' "$f"
+            sed -n '1,360p' "$f"
           done < <(find scdrive-app -type f \( -iname '*spotify*.dart' -o -iname '*spotify*.kt' \) | sort)
           echo '=== MAIN ACTIVITY MEDIA SECTION ==='
           grep -n -C 8 -E 'Spotify|RadioGarden|spotify|radioGarden|media' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt || true
           echo '=== MANIFEST MEDIA/QUERIES ==='
           grep -n -C 6 -E 'spotify|radiogarden|queries|BROWSABLE|VIEW' scdrive-app/android/app/src/main/AndroidManifest.xml || true
+      - name: Publish inspection pointer
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git fetch origin sc-drive-apk-build
+          git checkout -B sc-drive-apk-build origin/sc-drive-apk-build
+          mkdir -p build-status
+          cat > build-status/sc-drive-media-inspect-latest.txt <<EOF
+          STATUS=${{ job.status }}
+          RUN_ID=$GITHUB_RUN_ID
+          SOURCE_SHA=$GITHUB_SHA
+          EOF
+          git config user.name 'SC Drive Build Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add build-status/sc-drive-media-inspect-latest.txt
+          git commit -m 'publish media inspection pointer [skip ci]' || true
+          git push origin HEAD:sc-drive-apk-build || true
