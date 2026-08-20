@@ -1,65 +1,3 @@
-on.fromMap(item);
-+            if (station != null) stations.add(station);
-+          }
-+        }
-+      } catch (_) {}
-+    }
-+    _SavedStation? last;
-+    if (lastRaw != null && lastRaw.isNotEmpty) {
-+      try {
-+        final decoded = jsonDecode(lastRaw);
-+        if (decoded is Map) last = _SavedStation.fromMap(decoded);
-+      } catch (_) {}
-+    }
-+    if (!mounted) return;
-+    setState(() {
-+      _savedStations = stations.take(12).toList(growable: false);
-+      _lastStation = last;
-+    });
-+  }
-+
-+  Future<void> _consumeSharedStation() async {
-+    try {
-+      final shared = await _companionApps.invokeMethod<String>('consumeRadioGardenShare');
-+      if (shared == null || !_isStationUrl(shared)) return;
-+      await _saveStation(shared, label: _title ?? _stationLabelFromUrl(shared));
-+      if (mounted) setState(() => _message = 'STATION SAVED TO SC DRIVE');
-+    } catch (_) {}
-+  }
-+
-+  bool _isStationUrl(String value) {
-+    final uri = Uri.tryParse(value);
-+    return uri != null &&
-+        uri.host.toLowerCase().endsWith('radio.garden') &&
-+        uri.path.toLowerCase().contains('/listen/');
-+  }
-+
-+  String _stationLabelFromUrl(String value) {
-+    final uri = Uri.tryParse(value);
-+    if (uri == null) return 'RADIO GARDEN';
-+    final parts = uri.pathSegments.where((part) => part.isNotEmpty).toList();
-+    final listen = parts.indexWhere((part) => part.toLowerCase() == 'listen');
-+    if (listen >= 0 && listen + 1 < parts.length) {
-+      return parts[listen + 1]
-+          .replaceAll('-', ' ')
-+          .split(' ')
-+          .where((part) => part.isNotEmpty)
-+          .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
-+          .join(' ');
-+    }
-+    return 'RADIO GARDEN';
-+  }
-+
-+  Future<void> _saveStation(String url, {required String label}) async {
-+    if (!_isStationUrl(url)) return;
-+    final station = _SavedStation(label: label.trim().isEmpty ? 'RADIO GARDEN' : label.trim(), url: url);
-+    final next = <_SavedStation>[
-+      station,
-+      ..._savedStations.where((item) => item.url != url),
-+    ].take(12).toList(growable: false);
-+    await _storage.write(
-+      key: _favoritesKey,
-+      value: jsonEncode(next.map((item) => item.toMap()).toList()),
 +    );
 +    await _storage.write(key: _lastStationKey, value: jsonEncode(station.toMap()));
 +    if (!mounted) return;
@@ -98,4 +36,65 @@ on.fromMap(item);
 +        setState(() => _message = 'INSTALL RADIO GARDEN ON THIS HEAD UNIT');
 +      } else if (launched && _isStationUrl(uri.toString())) {
 +        final station = _SavedStation(
-+          label: stationLabel ?? _stationLabelFromUrl(uri.toStr
++          label: stationLabel ?? _stationLabelFromUrl(uri.toString()),
++          url: uri.toString(),
++        );
++        await _storage.write(key: _lastStationKey, value: jsonEncode(station.toMap()));
++        if (mounted) setState(() => _lastStation = station);
+       }
+     } catch (_) {
+-      if (mounted) setState(() => _message = 'RADIO GARDEN NOT AVAILABLE');
++      if (mounted) setState(() => _message = 'RADIO GARDEN APP NOT AVAILABLE');
+     } finally {
+       if (mounted) setState(() => _opening = false);
+     }
+@@ -140,7 +261,7 @@
+     final secondary = _artist ??
+         _album ??
+         (_permissionGranted
+-            ? 'Open a station in Radio Garden'
++            ? (_radioGardenInstalled ? 'Radio Garden audio backend ready' : 'Install Radio Garden on this head unit')
+             : 'Enable media access for live controls');
+ 
+     return Container(
+@@ -291,6 +412,39 @@
+             ),
+           ),
+           const Spacer(),
++          if (_savedStations.isNotEmpty || _lastStation != null) ...<Widget>[
++            SizedBox(
++              height: compact ? 30 : 34,
++              child: ListView(
++                scrollDirection: Axis.horizontal,
++                children: <Widget>[
++                  if (_lastStation != null)
++                    _StationChip(
++                      compact: compact,
++                      icon: Icons.history_rounded,
++                      label: _lastStation!.label,
++                      onTap: _opening
++                          ? null
++                          : () => unawaited(_open(Uri.parse(_lastStation!.url), stationLabel: _lastStation!.label)),
++                    ),
++                  ..._savedStations.take(compact ? 3 : 5).map(
++                    (item) => Padding(
++                      padding: const EdgeInsets.only(left: 6),
++                      child: _StationChip(
++                        compact: compact,
++                        icon: Icons.favorite_rounded,
++                        label: item.label,
++                        onTap: _opening
++                            ? null
++                            : () => unawaited(_open(Uri.parse(item.url), stationLabel: item.label)),
++                      ),
++                    ),
++                  ),
++                ],
++              ),
++            ),
++            SizedBox(height: compact ? 6 : 8),
++          ],
+           if (_message != null) ...<Widget>[
+             Text(
+               _message!,
+@@ -323,8 +477,10 @@
