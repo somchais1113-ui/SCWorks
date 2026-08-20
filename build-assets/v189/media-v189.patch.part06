@@ -1,0 +1,96 @@
+ing()),
++          url: uri.toString(),
++        );
++        await _storage.write(key: _lastStationKey, value: jsonEncode(station.toMap()));
++        if (mounted) setState(() => _lastStation = station);
+       }
+     } catch (_) {
+-      if (mounted) setState(() => _message = 'RADIO GARDEN NOT AVAILABLE');
++      if (mounted) setState(() => _message = 'RADIO GARDEN APP NOT AVAILABLE');
+     } finally {
+       if (mounted) setState(() => _opening = false);
+     }
+@@ -140,7 +261,7 @@
+     final secondary = _artist ??
+         _album ??
+         (_permissionGranted
+-            ? 'Open a station in Radio Garden'
++            ? (_radioGardenInstalled ? 'Radio Garden audio backend ready' : 'Install Radio Garden on this head unit')
+             : 'Enable media access for live controls');
+ 
+     return Container(
+@@ -291,6 +412,39 @@
+             ),
+           ),
+           const Spacer(),
++          if (_savedStations.isNotEmpty || _lastStation != null) ...<Widget>[
++            SizedBox(
++              height: compact ? 30 : 34,
++              child: ListView(
++                scrollDirection: Axis.horizontal,
++                children: <Widget>[
++                  if (_lastStation != null)
++                    _StationChip(
++                      compact: compact,
++                      icon: Icons.history_rounded,
++                      label: _lastStation!.label,
++                      onTap: _opening
++                          ? null
++                          : () => unawaited(_open(Uri.parse(_lastStation!.url), stationLabel: _lastStation!.label)),
++                    ),
++                  ..._savedStations.take(compact ? 3 : 5).map(
++                    (item) => Padding(
++                      padding: const EdgeInsets.only(left: 6),
++                      child: _StationChip(
++                        compact: compact,
++                        icon: Icons.favorite_rounded,
++                        label: item.label,
++                        onTap: _opening
++                            ? null
++                            : () => unawaited(_open(Uri.parse(item.url), stationLabel: item.label)),
++                      ),
++                    ),
++                  ),
++                ],
++              ),
++            ),
++            SizedBox(height: compact ? 6 : 8),
++          ],
+           if (_message != null) ...<Widget>[
+             Text(
+               _message!,
+@@ -323,8 +477,10 @@
+                 child: _GardenAction(
+                   compact: compact,
+                   icon: Icons.favorite_border_rounded,
+-                  label: 'FAVORITES',
+-                  onTap: _opening ? null : () => unawaited(_open(_favorites)),
++                  label: _savedStations.isEmpty ? 'ADD FAVORITE' : 'SAVED ${_savedStations.length}',
++                  onTap: _opening
++                      ? null
++                      : () => unawaited(_open(_favorites)),
+                 ),
+               ),
+               SizedBox(width: compact ? 7 : 9),
+@@ -509,6 +665,74 @@
+                   ),
+                 ),
+               ),
++            ],
++          ),
++        ),
++      ),
++    );
++  }
++}
++
++class _SavedStation {
++  const _SavedStation({required this.label, required this.url});
++  final String label;
++  final String url;
++
++  Map<String, String> toMap() => <String, String>{'label': label, 'url': url};
++
++  static _SavedStation? fromMap(Map<dynamic, dynamic> map) {
++    final label = map['label']?.toString().trim();
++    final url = map
