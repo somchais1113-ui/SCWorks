@@ -1,52 +1,3 @@
-
-+      return openSpotify(spotifyUri: uri, url: fallbackUrl);
-+    }
-+
-+    try {
-+      await refreshDevices();
-+      SpotifyDevice? target = preferredCarDevice;
-+      if (target == null) {
-+        for (final device in _devices) {
-+          if (device.isActive && device.controllable) {
-+            target = device;
-+            break;
-+          }
-+        }
-+      }
-+      if (target == null) {
-+        for (final device in _devices) {
-+          if (device.controllable) {
-+            target = device;
-+            break;
-+          }
-+        }
-+      }
-+
-+      if (target == null) {
-+        return openSpotify(spotifyUri: uri, url: fallbackUrl);
-+      }
-+
-+      final encodedDevice = Uri.encodeQueryComponent(target.id);
-+      final body = <String, Object>{};
-+      if (uri.startsWith('spotify:track:') || uri.startsWith('spotify:episode:')) {
-+        body['uris'] = <String>[uri];
-+      } else {
-+        body['context_uri'] = uri;
-+      }
-+      await _putJson('/me/player/play?device_id=$encodedDevice', body);
-+      await setPreferredCarDevice(target);
-+      await Future<void>.delayed(const Duration(milliseconds: 160));
-+      if (!_realtimeConnected) await refreshNowPlaying();
-+      _errorMessage = null;
-+      notifyListeners();
-+      return true;
-+    } catch (error) {
-+      // No active/controllable Connect device (or a non-Premium account):
-+      // stay out of the browser and hand the URI directly to the installed app.
-+      final opened = await openSpotify(spotifyUri: uri, url: fallbackUrl);
-+      if (!opened) {
-+        _errorMessage = _friendlyError(error);
-+        notifyListeners();
 +      }
 +      return opened;
 +    }
@@ -87,4 +38,63 @@
                                item: recent,
 -                              onTap: () => spotify.openSpotify(
 -                                url: recent.track.externalUrl,
-+                              onTap: () => s
++                              onTap: () => spotify.playSpotifyUri(
++                                recent.track.spotifyUri,
++                                fallbackUrl: recent.track.externalUrl,
+                               ),
+                             );
+                           },
+--- a/scdrive-app/lib/features/head_unit/radio_garden_panel.dart
++++ b/scdrive-app/lib/features/head_unit/radio_garden_panel.dart
+@@ -1,8 +1,9 @@
+ import 'dart:async';
++import 'dart:convert';
+ 
+ import 'package:flutter/material.dart';
+ import 'package:flutter/services.dart';
+-import 'package:url_launcher/url_launcher.dart';
++import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+ 
+ class RadioGardenPanel extends StatefulWidget {
+   const RadioGardenPanel({
+@@ -16,11 +17,16 @@
+   State<RadioGardenPanel> createState() => _RadioGardenPanelState();
+ }
+ 
+-class _RadioGardenPanelState extends State<RadioGardenPanel> {
++class _RadioGardenPanelState extends State<RadioGardenPanel> with WidgetsBindingObserver {
+   static const MethodChannel _mediaControl =
+       MethodChannel('com.scdeport.scdrive/radio_garden_media_control');
+   static const EventChannel _mediaEvents =
+       EventChannel('com.scdeport.scdrive/radio_garden_media');
++  static const MethodChannel _companionApps =
++      MethodChannel('com.scdeport.scdrive/companion_apps');
++  static const FlutterSecureStorage _storage = FlutterSecureStorage();
++  static const String _favoritesKey = 'sc_drive_radio_garden_favorites_v1';
++  static const String _lastStationKey = 'sc_drive_radio_garden_last_station_v1';
+ 
+   static final Uri _home = Uri.parse('https://radio.garden/');
+   static final Uri _search = Uri.parse('https://radio.garden/search');
+@@ -36,10 +42,14 @@
+   String? _artist;
+   String? _album;
+   String? _message;
++  List<_SavedStation> _savedStations = const <_SavedStation>[];
++  _SavedStation? _lastStation;
++  bool _radioGardenInstalled = true;
+ 
+   @override
+   void initState() {
+     super.initState();
++    WidgetsBinding.instance.addObserver(this);
+     _mediaSubscription = _mediaEvents.receiveBroadcastStream().listen(
+       _onMediaEvent,
+       onError: (_) {
+@@ -51,15 +61,118 @@
+         }
+       },
+     );
+-    unawaited(_refreshMedia());
++    unawaited(_initializeCompanion());
+   }
+ 
