@@ -1,0 +1,90 @@
+
++      return openSpotify(spotifyUri: uri, url: fallbackUrl);
++    }
++
++    try {
++      await refreshDevices();
++      SpotifyDevice? target = preferredCarDevice;
++      if (target == null) {
++        for (final device in _devices) {
++          if (device.isActive && device.controllable) {
++            target = device;
++            break;
++          }
++        }
++      }
++      if (target == null) {
++        for (final device in _devices) {
++          if (device.controllable) {
++            target = device;
++            break;
++          }
++        }
++      }
++
++      if (target == null) {
++        return openSpotify(spotifyUri: uri, url: fallbackUrl);
++      }
++
++      final encodedDevice = Uri.encodeQueryComponent(target.id);
++      final body = <String, Object>{};
++      if (uri.startsWith('spotify:track:') || uri.startsWith('spotify:episode:')) {
++        body['uris'] = <String>[uri];
++      } else {
++        body['context_uri'] = uri;
++      }
++      await _putJson('/me/player/play?device_id=$encodedDevice', body);
++      await setPreferredCarDevice(target);
++      await Future<void>.delayed(const Duration(milliseconds: 160));
++      if (!_realtimeConnected) await refreshNowPlaying();
++      _errorMessage = null;
++      notifyListeners();
++      return true;
++    } catch (error) {
++      // No active/controllable Connect device (or a non-Premium account):
++      // stay out of the browser and hand the URI directly to the installed app.
++      final opened = await openSpotify(spotifyUri: uri, url: fallbackUrl);
++      if (!opened) {
++        _errorMessage = _friendlyError(error);
++        notifyListeners();
++      }
++      return opened;
++    }
++  }
++
++  String? _spotifyUriFromWebUrl(String? value) {
++    final parsed = Uri.tryParse(value ?? '');
++    if (parsed == null || !parsed.host.contains('spotify.com')) return null;
++    final parts = parsed.pathSegments.where((part) => part.isNotEmpty).toList();
++    if (parts.length < 2) return null;
++    final typeIndex = parts.first == 'intl-th' || parts.first.startsWith('intl-') ? 1 : 0;
++    if (parts.length <= typeIndex + 1) return null;
++    final type = parts[typeIndex];
++    final id = parts[typeIndex + 1];
++    const supported = <String>{'track', 'album', 'artist', 'playlist', 'episode', 'show'};
++    if (!supported.contains(type) || id.isEmpty) return null;
++    return 'spotify:$type:$id';
+   }
+ 
+   Future<void> _initializeRealtimeBridge() async {
+--- a/scdrive-app/lib/features/music/music_screen.dart
++++ b/scdrive-app/lib/features/music/music_screen.dart
+@@ -84,8 +84,9 @@
+                           final playlist = spotify.playlists[index];
+                           return _PlaylistCard(
+                             playlist: playlist,
+-                            onTap: () => spotify.openSpotify(
+-                              url: playlist.externalUrl,
++                            onTap: () => spotify.playSpotifyUri(
++                              playlist.spotifyUri,
++                              fallbackUrl: playlist.externalUrl,
+                             ),
+                           );
+                         },
+@@ -115,8 +116,9 @@
+                             final recent = spotify.recent[index];
+                             return _RecentTrackTile(
+                               item: recent,
+-                              onTap: () => spotify.openSpotify(
+-                                url: recent.track.externalUrl,
++                              onTap: () => s
