@@ -49,21 +49,27 @@ jobs:
           git show origin/main:build-assets/v188/apply-v188.sh > build-assets/v188/apply-v188.sh
           chmod +x build-assets/v188/apply-v188.sh
           bash build-assets/v188/apply-v188.sh
-      - name: Print media source inventory
+      - name: Export media source snapshot
         shell: bash
         run: |
           set -euxo pipefail
-          echo '=== MEDIA FILES ==='
-          find scdrive-app -type f \( -iname '*spotify*' -o -iname '*radio_garden*' -o -iname '*media*session*' \) -print | sort
-          echo '=== SPOTIFY DART/KOTLIN CONTENT ==='
-          while IFS= read -r f; do
-            echo "===== $f ====="
-            sed -n '1,360p' "$f"
-          done < <(find scdrive-app -type f \( -iname '*spotify*.dart' -o -iname '*spotify*.kt' \) | sort)
-          echo '=== MAIN ACTIVITY MEDIA SECTION ==='
-          grep -n -C 8 -E 'Spotify|RadioGarden|spotify|radioGarden|media' scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt || true
-          echo '=== MANIFEST MEDIA/QUERIES ==='
-          grep -n -C 6 -E 'spotify|radiogarden|queries|BROWSABLE|VIEW' scdrive-app/android/app/src/main/AndroidManifest.xml || true
+          mkdir -p snapshot/lib/services snapshot/lib/features/head_unit snapshot/lib/features/music snapshot/lib/domain/spotify snapshot/android
+          cp scdrive-app/lib/services/spotify_service.dart snapshot/lib/services/
+          cp scdrive-app/lib/features/head_unit/head_unit_screen.dart snapshot/lib/features/head_unit/
+          cp scdrive-app/lib/features/head_unit/radio_garden_panel.dart snapshot/lib/features/head_unit/
+          cp scdrive-app/lib/features/music/music_screen.dart snapshot/lib/features/music/
+          cp scdrive-app/lib/domain/spotify/spotify_models.dart snapshot/lib/domain/spotify/
+          cp scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt snapshot/android/
+          cp scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/spotify/SpotifyMediaSessionBridge.kt snapshot/android/
+          cp scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/spotify/RadioGardenMediaSessionBridge.kt snapshot/android/
+          cp scdrive-app/android/app/src/main/AndroidManifest.xml snapshot/android/
+          cp scdrive-app/pubspec.yaml snapshot/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.8.8-Media-Source-Snapshot
+          path: snapshot/**
+          if-no-files-found: error
+          retention-days: 2
       - name: Publish inspection pointer
         if: always()
         shell: bash
@@ -76,6 +82,7 @@ jobs:
           STATUS=${{ job.status }}
           RUN_ID=$GITHUB_RUN_ID
           SOURCE_SHA=$GITHUB_SHA
+          ARTIFACT_NAME=SC-Drive-v1.8.8-Media-Source-Snapshot
           EOF
           git config user.name 'SC Drive Build Bot'
           git config user.email 'actions@users.noreply.github.com'
