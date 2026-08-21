@@ -1,0 +1,110 @@
+name: Audit SC Drive v1.9.1 Final Source
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/sc-drive-v191-final-source-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: sc-drive-apk-build
+          fetch-depth: 1
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.7'
+          channel: stable
+          cache: true
+      - name: Reconstruct exact v1.9.1 source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git fetch --depth=1 origin main
+          git show origin/main:.github/workflows/sc-drive-v189-inspect-media.yml > /tmp/inspect-v188.yml
+          ruby -ryaml -e 'y=YAML.load_file(ARGV[0]); n=ARGV[1]; s=y["jobs"]["inspect"]["steps"].find{|x|x["name"]==n}; abort("missing #{n}") unless s&&s["run"]; print s["run"]' /tmp/inspect-v188.yml 'Reconstruct v1.8.8 source' >/tmp/reconstruct-v188.sh
+          bash /tmp/reconstruct-v188.sh
+          mkdir -p build-assets/v190
+          git show origin/main:build-assets/v190/drive_dynamics_panel.dart > build-assets/v190/drive_dynamics_panel.dart
+          git show origin/main:build-assets/v190/apply-v190.sh > build-assets/v190/apply-v190.sh
+          chmod +x build-assets/v190/apply-v190.sh
+          bash build-assets/v190/apply-v190.sh
+          git show origin/main:build-assets/v191/v191-bundle.tar.gz.b64 | tr -d '\r\n' | base64 --decode > /tmp/v191.tar.gz
+          echo '776d0546860259ac9d263d12ddd534b2904ff9800e5e7c3cdfbada3d245b0a89  /tmp/v191.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/v191.tar.gz
+          chmod +x build-assets/v191/apply-v191.sh
+          bash build-assets/v191/apply-v191.sh
+          grep -n '^version: 1.9.1+36' scdrive-app/pubspec.yaml
+      - name: Static and unit audit
+        shell: bash
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          SC_DRIVE_ALLOW_TEST_SIGNING: '1'
+        run: |
+          set -euxo pipefail
+          cd scdrive-app
+          rm -f "$PUB_CACHE/credentials.json" "$HOME/.pub-cache/credentials.json" || true
+          flutter pub get
+          flutter analyze --no-fatal-infos 2>&1 | tee /tmp/flutter-analyze.txt
+          cd android
+          ./gradlew :app:testDebugUnitTest --no-daemon 2>&1 | tee /tmp/android-tests.txt
+      - name: Export final source and audit clues
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p out/source
+          cp scdrive-app/lib/features/head_unit/head_unit_screen.dart out/source/
+          cp scdrive-app/lib/features/head_unit/drive_deck_panel.dart out/source/
+          cp scdrive-app/lib/features/head_unit/drive_dynamics_panel.dart out/source/
+          cp scdrive-app/lib/services/drive_telemetry_service.dart out/source/
+          cp scdrive-app/lib/services/obd_service.dart out/source/
+          cp scdrive-app/lib/models/obd_state.dart out/source/
+          cp scdrive-app/lib/services/g_force_provider.dart out/source/
+          cp scdrive-app/lib/services/g_force_engine.dart out/source/
+          cp scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/gforce/GForceSensorManager.kt out/source/
+          cp scdrive-app/android/app/src/main/kotlin/com/scdeport/scdrive/MainActivity.kt out/source/
+          cp /tmp/flutter-analyze.txt out/ || true
+          cp /tmp/android-tests.txt out/ || true
+          grep -RniE 'gforce_v2|rotation|linear|accelerometer|heading|bias|stationary|rpmValid|rpmAgeMs|engineRpm|estimatedRpm|PageView.builder|initialPage|onPageChanged|SafeArea|Color\(0x1A0A0E13\)|Timer.periodic|Duration\(milliseconds' out/source > out/key-lines.txt || true
+          cat > out/AUDIT-NOTES.txt <<EOF
+          Exact source reconstructed through v1.9.1 apply bundle.
+          Flutter analyze and Android unit tests executed.
+          Review physical-runtime risks separately: head-unit sensor availability/orientation, GNSS heading at low speed, OBD RPM freshness/rate, Google Maps platform-view gesture behavior.
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SC-Drive-v1.9.1-FINAL-SOURCE-AUDIT
+          path: out/**
+          if-no-files-found: error
+          retention-days: 3
+      - name: Publish audit pointer
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git fetch origin sc-drive-apk-build
+          git checkout -B sc-drive-apk-build origin/sc-drive-apk-build
+          mkdir -p build-status
+          cat > build-status/sc-drive-v191-final-audit.txt <<EOF
+          STATUS=${{ job.status }}
+          RUN_ID=$GITHUB_RUN_ID
+          SOURCE_SHA=$GITHUB_SHA
+          ARTIFACT_NAME=SC-Drive-v1.9.1-FINAL-SOURCE-AUDIT
+          EOF
+          git config user.name 'SC Drive Build Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add build-status/sc-drive-v191-final-audit.txt
+          git commit -m 'publish v1.9.1 final audit pointer [skip ci]' || true
+          git push origin HEAD:sc-drive-apk-build || true
