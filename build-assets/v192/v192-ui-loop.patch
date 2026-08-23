@@ -59,7 +59,7 @@
      _speedTicker = createTicker(_onFrame)..start();
    }
  
-@@ -412,15 +427,38 @@
+@@ -412,21 +427,47 @@
        widget.telemetry.addListener(_onTelemetry);
        _readTelemetry(initial: true);
      }
@@ -71,7 +71,7 @@
    }
  
    void _onTelemetry() => _readTelemetry(initial: false);
-+
+ 
 +  void _onObd() {
 +    final wasObd = _rpmFromObd;
 +    _readTelemetry(initial: false);
@@ -79,7 +79,7 @@
 +      setState(() {});
 +    }
 +  }
- 
++
    void _readTelemetry({required bool initial}) {
      final telemetry = widget.telemetry;
      _gpsLocked = telemetry.hasUsableSpeedEstimate;
@@ -109,7 +109,7 @@
      }
    }
  
-@@ -431,12 +469,20 @@
+@@ -437,10 +478,16 @@
      final dt =
          ((elapsed - previous).inMicroseconds / 1000000.0).clamp(0.001, 0.050);
  
@@ -127,7 +127,7 @@
            _updateDigitalSpeed(0, false);
          });
        }
-@@ -470,9 +516,6 @@
+@@ -467,9 +514,6 @@
      var next = _visualSpeedKph + error * alpha;
      if (absError < 0.025) next = _targetSpeedKph;
  
@@ -137,7 +137,7 @@
      if ((next - _visualSpeedKph).abs() > 0.002 ||
          (nextRpm - _visualRpm).abs() > 0.5) {
        setState(() {
-@@ -505,6 +548,7 @@
+@@ -505,6 +549,7 @@
    @override
    void dispose() {
      widget.telemetry.removeListener(_onTelemetry);
@@ -145,7 +145,7 @@
      _speedTicker.dispose();
      super.dispose();
    }
-@@ -601,10 +645,10 @@
+@@ -601,10 +646,10 @@
                    children: <Widget>[
                      Expanded(
                        child: _InstrumentMetric(
@@ -160,7 +160,7 @@
                        ),
                      ),
                      Container(
-@@ -2698,52 +2742,67 @@
+@@ -2698,52 +2743,67 @@
    @override
    void paint(Canvas canvas, Size size) {
      final sf = speedFraction.clamp(0.0, 1.0);
@@ -249,7 +249,7 @@
        );
  
        if (major) {
-@@ -2753,35 +2812,102 @@
+@@ -2753,35 +2813,102 @@
            style: TextStyle(
              color: const Color(0xFFCED1D6),
              fontFamily: 'NissanBrand',
